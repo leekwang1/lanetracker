@@ -37,6 +37,8 @@ class CrossSectionAnalyzerV2Config:
     score_abnormal_width_penalty_weight: float = 0.8
     signal_target_sigma_floor: float = 2500.0
     signal_contrast_sigma_floor: float = 1800.0
+    signal_overbright_sigma_scale: float = 0.35
+    signal_overcontrast_sigma_scale: float = 0.30
     gap_peak_relax_factor: float = 0.75
     gap_stripe_threshold_factor: float = 0.75
     gap_center_prior_boost: float = 1.25
@@ -251,15 +253,24 @@ class CrossSectionAnalyzerV2:
             bg_vals = value_samples[outside_mask]
         background_est = float(np.quantile(bg_vals, 0.35)) if bg_vals.size else float(seed_profile.background_intensity)
         contrast_est = max(target_est - background_est, 0.0)
-        seed_contrast = max(float(seed_profile.target_intensity) - float(seed_profile.background_intensity), 1.0)
+        seed_target = float(seed_profile.target_intensity)
+        seed_contrast = max(seed_target - float(seed_profile.background_intensity), 1.0)
         target_sigma = max(float(self.cfg.signal_target_sigma_floor), seed_contrast)
         contrast_sigma = max(float(self.cfg.signal_contrast_sigma_floor), seed_contrast * 0.75)
-        target_term = float(np.exp(-abs(target_est - float(seed_profile.target_intensity)) / target_sigma))
+        target_term = float(np.exp(-abs(target_est - seed_target) / target_sigma))
         contrast_term = float(np.exp(-abs(contrast_est - seed_contrast) / contrast_sigma))
-        cand.signal_consistency = float(np.clip(0.45 * target_term + 0.55 * contrast_term, 0.0, 1.0))
+        overbright_sigma = max(target_sigma * float(self.cfg.signal_overbright_sigma_scale), 1.0)
+        overcontrast_sigma = max(contrast_sigma * float(self.cfg.signal_overcontrast_sigma_scale), 1.0)
+        overbright_penalty = float(np.exp(-max(target_est - seed_target, 0.0) / overbright_sigma))
+        overcontrast_penalty = float(np.exp(-max(contrast_est - seed_contrast, 0.0) / overcontrast_sigma))
+        base_consistency = 0.45 * target_term + 0.55 * contrast_term
+        penalty_term = min(overbright_penalty, overcontrast_penalty)
+        cand.signal_consistency = float(np.clip(base_consistency * penalty_term, 0.0, 1.0))
         cand.debug["target_intensity_est"] = target_est
         cand.debug["background_intensity_est"] = background_est
         cand.debug["contrast_est"] = contrast_est
+        cand.debug["overbright_penalty"] = overbright_penalty
+        cand.debug["overcontrast_penalty"] = overcontrast_penalty
 
     def _score_candidate_identity(self, cand, prev_state, seed_profile, is_gap_mode):
         cand.strength_score = 1.2 * cand.peak_value + 0.8 * cand.prominence + 0.5 * cand.symmetry_score

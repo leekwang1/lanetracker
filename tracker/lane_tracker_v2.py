@@ -5,10 +5,12 @@ import numpy as np
 
 from ..core.spatial_grid import SpatialGrid
 from ..core.types import SeedProfile, StopReason, StepScores, TrackMode
+from .association import LaneAssociator
 from .cross_section_analyzer import CrossSectionAnalyzerV2, CrossSectionAnalyzerV2Config
 from .cross_section_profile import CrossSectionProfile
 from .lane_hypothesis import LaneHypothesis
 from .lane_state import LaneState
+from .observation import LaneObservationEngine, TrackerObservation
 from .state_machine import LaneStateMachine
 from ..detectors.crosswalk_detector import CrosswalkDetector
 from ..detectors.line_type_classifier import LineTypeClassifier
@@ -21,9 +23,9 @@ class TrackerV2Config:
     step_length_m: float = 0.20
     hypothesis_keep_top_k: int = 3
     search_along_half_m: float = 0.35
-    search_lateral_half_m: float = 0.35
-    init_search_lateral_half_m: float = 0.175
-    step_search_lateral_half_m: float = 0.225
+    search_lateral_half_m: float = 0.2333333333333333
+    init_search_lateral_half_m: float = 0.11666666666666665
+    step_search_lateral_half_m: float = 0.15
     lane_width_init_m: float = 0.15
     z_local_radius_m: float = 0.20
     max_heading_change_deg: float = 10.0
@@ -33,6 +35,10 @@ class TrackerV2Config:
     seed_radius_m: float = 0.20
     profile_update_radius_m: float = 0.20
     profile_update_alpha: float = 0.12
+    profile_update_min_quality: float = 0.72
+    profile_update_min_identity: float = 0.70
+    profile_update_min_width_m: float = 0.10
+    profile_update_max_width_m: float = 0.30
     center_z_fit_radius_m: float = 0.20
     z_fit_window_m: float = 0.18
     save_debug_json: bool = True
@@ -41,6 +47,7 @@ class TrackerV2Config:
     enable_center_refinement: bool = True
     center_refine_radius_m: float = 0.23
     center_refine_max_shift_m: float = 0.08
+    center_refine_extra_max_shift_m: float = 0.025
     cross_section_radius_m: float = 0.25
     cross_section_forward_window_m: float = 0.15
     cross_section_bin_size_m: float = 0.02
@@ -52,7 +59,7 @@ class TrackerV2Config:
     min_motion_tangent_step_m: float = 0.03
     gap_bridge_step_scale: float = 0.50
     gap_search_along_half_m: float = 0.45
-    gap_search_lateral_half_m: float = 0.35
+    gap_search_lateral_half_m: float = 0.2333333333333333
     recovery_quality_threshold: float = 0.60
     enable_crosswalk_stop: bool = False
     stop_crosswalk_threshold: float = 0.90
@@ -83,12 +90,23 @@ class TrackerV2Config:
     narrow_candidate_salvage_peak: float = 0.20
     narrow_candidate_salvage_center_jump_m: float = 0.08
     narrow_candidate_width_blend: float = 0.85
+    normal_mode_min_candidate_width_m: float = 0.14
+    normal_mode_single_candidate_min_width_m: float = 0.16
     hard_center_offset_limit_m: float = 0.25
     max_z_step_m: float = 0.12
     hard_max_z_step_m: float = 0.15
     lane_loyalty_history_points: int = 8
     lane_loyalty_tolerance_m: float = 0.135
     lane_loyalty_weight: float = 0.75
+    loyalty_gate_min_history: int = 6
+    loyalty_gate_min_visible: float = 0.25
+    loyalty_gate_quality_bypass: float = 0.92
+    trusted_history_min_points: int = 4
+    trusted_update_min_quality: float = 0.76
+    trusted_update_min_loyalty: float = 0.55
+    trusted_update_min_identity: float = 0.62
+    trusted_update_min_width_m: float = 0.10
+    trusted_update_max_width_m: float = 0.30
     enable_trajectory_fit: bool = True
     trajectory_fit_history_points: int = 8
     trajectory_fit_min_points: int = 4
@@ -145,6 +163,14 @@ class LaneTrackerV2:
             crosswalk_threshold=cfg.stop_crosswalk_threshold,
         )
         self.state_machine = LaneStateMachine()
+        self.observer = LaneObservationEngine(
+            grid=self.grid,
+            xyz=self.xyz,
+            intensity=self.intensity,
+            analyzer=self.cross_analyzer,
+            cfg=cfg,
+        )
+        self.associator = LaneAssociator()
         self.hypotheses: list[LaneHypothesis] = []
         self.debug_frames: list[StepDebugFrame] = []
         self.step_index = 0
@@ -158,13 +184,16 @@ class LaneTrackerV2:
         tangent = p1[:2] - p0[:2]
         tangent = tangent / max(np.linalg.norm(tangent), 1e-12)
         self.seed_profile = self._estimate_seed_profile(p0)
-        idx = self.grid.query_oriented_strip_xy(
-            p0[:2],
-            tangent,
-            self.cfg.search_along_half_m,
-            self.cfg.init_search_lateral_half_m,
+        init_observation = self.observer.observe(
+            center_xyz=p0,
+            tangent_xy=tangent,
+            prev_state=None,
+            seed_profile=self.seed_profile,
+            along_half_m=float(self.cfg.search_along_half_m),
+            lateral_half_m=float(self.cfg.init_search_lateral_half_m),
+            is_gap_mode=False,
         )
-        profile = self.cross_analyzer.analyze(self.xyz, self.intensity, idx, p0, tangent, None, self.seed_profile, False)
+        profile = init_observation.profile
         width = self.cfg.lane_width_init_m
         left_edge = -0.5 * width
         right_edge = 0.5 * width
@@ -194,21 +223,30 @@ class LaneTrackerV2:
             self._apply_lateral_center_shift(state, stripe_center * correction_gain)
             if self.cfg.enable_center_refinement:
                 refine_shift = self._refine_center_xy_shift(state.center_xyz, state.tangent_xy)
-                self._apply_lateral_center_shift(state, refine_shift)
                 cross_shift = self._refine_centerline_cross_section_shift(
                     state.center_xyz,
                     state.tangent_xy,
                     max(0.5 * float(state.lane_width_m), 0.05),
                 )
-                self._apply_lateral_center_shift(state, cross_shift)
+                extra_shift = float(
+                    np.clip(
+                        refine_shift + cross_shift,
+                        -float(self.cfg.center_refine_extra_max_shift_m),
+                        float(self.cfg.center_refine_extra_max_shift_m),
+                    )
+                )
+                self._apply_lateral_center_shift(state, extra_shift)
         state.center_xyz[2] = self._fit_center_z(state.center_xyz[:2], float(state.center_xyz[2]))
-        if self.seed_profile is not None:
-            self.seed_profile = self._refresh_seed_profile(state.center_xyz, self.seed_profile)
         state.history_centers.append(state.center_xyz.copy())
         state.history_widths.append(width)
-        state.history_tangents.append(tangent.copy())
+        state.history_tangents.append(state.tangent_xy.copy())
         state.history_visibility.append(1 if profile.selected_idx is not None else 0)
         state.history_modes.append(state.mode.value)
+        if profile.selected_idx is not None:
+            state.trusted_history_centers.append(state.center_xyz.copy())
+            state.trusted_history_tangents.append(state.tangent_xy.copy())
+        if self.seed_profile is not None and self._should_refresh_seed_profile(state):
+            self.seed_profile = self._refresh_seed_profile(state.center_xyz, self.seed_profile)
         self.hypotheses = [LaneHypothesis(state=state, total_score=0.0)]
         self.debug_frames = [
             StepDebugFrame(
@@ -224,12 +262,12 @@ class LaneTrackerV2:
                 switch_risk=0.0,
                 search_along_half_m=float(self.cfg.search_along_half_m),
                 search_lateral_half_m=float(self.cfg.init_search_lateral_half_m),
-                query_debug=self._build_query_debug(idx),
+                query_debug=self._build_query_debug(init_observation.indices),
                 candidate_summaries=self._build_candidate_summaries(profile),
                 trajectory_line_points=self._build_trajectory_line_points(
-                    state.history_centers,
+                    self._reference_history(state),
                     state.center_xyz,
-                    state.tangent_xy,
+                    self._reference_tangent(state),
                 ),
             )
         ]
@@ -243,6 +281,7 @@ class LaneTrackerV2:
         self.step_index = 0
         self.initialized = False
         self.stop_reason = StopReason.NONE
+        self.seed_profile = None
 
     def get_current_state(self) -> LaneState | None:
         return self.hypotheses[0].state if self.hypotheses else None
@@ -277,9 +316,9 @@ class LaneTrackerV2:
                 mode=current.mode.value,
                 stop_reason=self.stop_reason.value,
                 trajectory_line_points=self._build_trajectory_line_points(
-                    current.history_centers,
+                    self._reference_history(current),
                     current.center_xyz,
-                    current.tangent_xy,
+                    self._reference_tangent(current),
                 ),
             )
         expanded: list[LaneHypothesis] = []
@@ -291,15 +330,17 @@ class LaneTrackerV2:
                 predicted_debug_points.append(pred.center_xyz.copy())
                 if not self._candidate_is_allowed(pred.center_xyz, hyp.state.center_xyz, hyp.state.tangent_xy):
                     continue
-                along_half, lateral_half = self._resolve_search_strip(hyp.state)
-                idx = self.grid.query_oriented_strip_xy(
-                    pred.center_xyz[:2],
-                    pred.tangent_xy,
-                    along_half,
-                    lateral_half,
+                along_half, lateral_half = self.observer.resolve_search_strip(hyp.state)
+                observation = self.observer.observe(
+                    center_xyz=pred.center_xyz,
+                    tangent_xy=pred.tangent_xy,
+                    prev_state=hyp.state,
+                    seed_profile=self.seed_profile,
+                    along_half_m=along_half,
+                    lateral_half_m=lateral_half,
+                    is_gap_mode=hyp.state.mode == TrackMode.GAP_BRIDGING,
                 )
-                profile = self.cross_analyzer.analyze(self.xyz, self.intensity, idx, pred.center_xyz, pred.tangent_xy, hyp.state, self.seed_profile, hyp.state.mode == TrackMode.GAP_BRIDGING)
-                new_hyp = self._build_next_hypothesis(hyp, pred, profile, idx, along_half, lateral_half)
+                new_hyp = self._build_next_hypothesis(hyp, pred, observation)
                 expanded.append(new_hyp)
                 if new_hyp.total_score > best_score:
                     best_score = float(new_hyp.total_score)
@@ -312,7 +353,7 @@ class LaneTrackerV2:
             dbg.predicted_centers = predicted_debug_points[:top_k]
         best = self.hypotheses[0]
         best.state.center_xyz[2] = self._fit_center_z(best.state.center_xyz[:2], float(best.state.center_xyz[2]))
-        if self.seed_profile is not None:
+        if self.seed_profile is not None and self._should_refresh_seed_profile(best.state):
             self.seed_profile = self._refresh_seed_profile(best.state.center_xyz, self.seed_profile)
         dbg.cross_section_profile = best.debug_last.get("profile")
         dbg.hypothesis_scores = [h.total_score for h in self.hypotheses]
@@ -331,9 +372,9 @@ class LaneTrackerV2:
         dbg.query_debug = dict(best.debug_last.get("query_debug", {}))
         dbg.candidate_summaries = list(best.debug_last.get("candidate_summaries", []))
         dbg.trajectory_line_points = self._build_trajectory_line_points(
-            best.state.history_centers,
+            self._reference_history(best.state),
             best.state.center_xyz,
-            best.state.tangent_xy,
+            self._reference_tangent(best.state),
         )
         reason = self.stop_policy.evaluate(best.state, crosswalk_score)
         if reason != StopReason.NONE:
@@ -347,8 +388,8 @@ class LaneTrackerV2:
 
     def _expand_predicted_states(self, state: LaneState) -> list[LaneState]:
         out: list[LaneState] = []
-        base_t = self._unit2(state.tangent_xy.copy())
-        fit_t = self._fit_trajectory_tangent(state.history_centers, state.center_xyz, base_t)
+        base_t = self._reference_tangent(state)
+        fit_t = self._fit_trajectory_tangent(self._reference_history(state), state.center_xyz, base_t)
         if fit_t is not None:
             blend = float(np.clip(self.cfg.trajectory_tangent_blend, 0.0, 1.0))
             base_t = self._unit2((1.0 - blend) * base_t + blend * fit_t)
@@ -372,44 +413,73 @@ class LaneTrackerV2:
                 out.append(s)
         return out
 
-    def _build_next_hypothesis(self, prev_hyp: LaneHypothesis, pred_state: LaneState, profile: CrossSectionProfile, idx: np.ndarray, along_half: float, lateral_half: float) -> LaneHypothesis:
+    def _build_next_hypothesis(
+        self,
+        prev_hyp: LaneHypothesis,
+        pred_state: LaneState,
+        primary_observation: TrackerObservation,
+    ) -> LaneHypothesis:
         state = pred_state.copy_shallow()
-        active_profile = profile
-        active_idx = np.asarray(idx, dtype=np.int64)
-        active_along_half = float(along_half)
-        active_lateral_half = float(lateral_half)
-        stripe_visible = active_profile.selected_idx is not None
-        stripe_rejected = False
-        salvage_narrow = False
-        if stripe_visible:
-            sc = active_profile.stripe_candidates[active_profile.selected_idx]
-            salvage_narrow = self._can_salvage_narrow_candidate(active_profile, sc, prev_hyp.state)
-            stripe_visible = self._is_selected_stripe_reliable(active_profile, sc, prev_hyp.state)
-            stripe_rejected = not stripe_visible
+        decision = self.associator.select_observation(
+            primary_observation,
+            prev_hyp.state,
+            salvage_narrow_fn=self._can_salvage_narrow_candidate,
+            reliable_fn=self._is_selected_stripe_reliable,
+            reference_history_fn=self._loyalty_history,
+            reference_tangent_fn=self._reference_tangent,
+            loyalty_term_fn=self._lane_loyalty_term,
+            loyalty_gate_min_history=int(self.cfg.loyalty_gate_min_history),
+            loyalty_gate_min_visible=float(self.cfg.loyalty_gate_min_visible),
+            loyalty_gate_quality_bypass=float(self.cfg.loyalty_gate_quality_bypass),
+            source="primary",
+        )
         if (
             bool(self.cfg.retry_recovery_on_reject)
             and prev_hyp.state.mode != TrackMode.GAP_BRIDGING
-            and (not stripe_visible or stripe_rejected)
+            and (not decision.stripe_visible or decision.stripe_rejected)
         ):
-            retry_profile, retry_idx, retry_along, retry_lateral = self._reanalyze_with_recovery_strip(
-                pred_state.center_xyz,
-                pred_state.tangent_xy,
-                prev_hyp.state,
+            retry_observation = self.observer.observe_recovery(
+                center_xyz=pred_state.center_xyz,
+                tangent_xy=pred_state.tangent_xy,
+                prev_state=prev_hyp.state,
+                seed_profile=self.seed_profile,
+                anchor_projected_frame=self._anchor_projected_frame,
+                should_refresh_seed_profile=self._should_refresh_seed_profile,
+                refresh_seed_profile=self._refresh_seed_profile,
             )
-            retry_visible = retry_profile.selected_idx is not None
-            retry_salvage_narrow = False
-            if retry_visible:
-                retry_sc = retry_profile.stripe_candidates[retry_profile.selected_idx]
-                retry_salvage_narrow = self._can_salvage_narrow_candidate(retry_profile, retry_sc, prev_hyp.state)
-                retry_visible = self._is_selected_stripe_reliable(retry_profile, retry_sc, prev_hyp.state)
-            if retry_visible:
-                active_profile = retry_profile
-                active_idx = retry_idx
-                active_along_half = retry_along
-                active_lateral_half = retry_lateral
-                stripe_visible = True
-                stripe_rejected = False
-                salvage_narrow = retry_salvage_narrow
+            retry_decision = self.associator.select_observation(
+                retry_observation,
+                prev_hyp.state,
+                salvage_narrow_fn=self._can_salvage_narrow_candidate,
+                reliable_fn=self._is_selected_stripe_reliable,
+                reference_history_fn=self._loyalty_history,
+                reference_tangent_fn=self._reference_tangent,
+                loyalty_term_fn=self._lane_loyalty_term,
+                loyalty_gate_min_history=int(self.cfg.loyalty_gate_min_history),
+                loyalty_gate_min_visible=float(self.cfg.loyalty_gate_min_visible),
+                loyalty_gate_quality_bypass=float(self.cfg.loyalty_gate_quality_bypass),
+                source="recovery",
+            )
+            if retry_decision.stripe_visible:
+                decision = retry_decision
+                state.center_xyz = decision.observation.query_center_xyz.copy()
+                state.tangent_xy = decision.observation.query_tangent_xy.copy()
+        active_profile = decision.observation.profile
+        active_idx = decision.observation.indices
+        active_along_half = float(decision.observation.along_half_m)
+        active_lateral_half = float(decision.observation.lateral_half_m)
+        stripe_visible = decision.stripe_visible
+        stripe_rejected = decision.stripe_rejected
+        salvage_narrow = decision.salvage_narrow
+        update_profile_shift = 0.0
+        update_refine_shift = 0.0
+        update_cross_shift = 0.0
+        update_tangent_before = state.tangent_xy.copy()
+        update_tangent_after = state.tangent_xy.copy()
+        update_center_before = state.center_xyz.copy()
+        update_center_after = state.center_xyz.copy()
+        post_loyalty = decision.loyalty_value
+        post_loyalty_failed = False
         if stripe_visible:
             sc = active_profile.stripe_candidates[active_profile.selected_idx]
             correction_gain = float(np.clip(self.cfg.profile_center_correction_gain, 0.0, 1.0))
@@ -431,36 +501,66 @@ class LaneTrackerV2:
                 )
                 left_edge = stripe_center - 0.5 * lane_width
                 right_edge = stripe_center + 0.5 * lane_width
-            state.stripe_center_m = stripe_center
-            state.left_edge_m = left_edge
-            state.right_edge_m = right_edge
-            state.lane_width_m = lane_width
-            state.stripe_strength = sc.peak_value
-            self._apply_lateral_center_shift(state, stripe_center * correction_gain)
+            candidate_state = state.copy_shallow()
+            update_center_before = candidate_state.center_xyz.copy()
+            update_tangent_before = candidate_state.tangent_xy.copy()
+            candidate_state.stripe_center_m = stripe_center
+            candidate_state.left_edge_m = left_edge
+            candidate_state.right_edge_m = right_edge
+            candidate_state.lane_width_m = lane_width
+            candidate_state.stripe_strength = sc.peak_value
+            update_profile_shift = stripe_center * correction_gain
+            self._apply_lateral_center_shift(candidate_state, update_profile_shift)
             if self.cfg.enable_center_refinement:
-                refine_shift = self._refine_center_xy_shift(state.center_xyz, state.tangent_xy)
-                self._apply_lateral_center_shift(state, refine_shift)
-                cross_shift = self._refine_centerline_cross_section_shift(
-                    state.center_xyz,
-                    state.tangent_xy,
-                    max(0.5 * float(state.lane_width_m), 0.05),
+                update_refine_shift = self._refine_center_xy_shift(candidate_state.center_xyz, candidate_state.tangent_xy)
+                update_cross_shift = self._refine_centerline_cross_section_shift(
+                    candidate_state.center_xyz,
+                    candidate_state.tangent_xy,
+                    max(0.5 * float(candidate_state.lane_width_m), 0.05),
                 )
-                self._apply_lateral_center_shift(state, cross_shift)
-            state.tangent_xy = self._realign_tangent_to_motion(
+                extra_shift = float(
+                    np.clip(
+                        update_refine_shift + update_cross_shift,
+                        -float(self.cfg.center_refine_extra_max_shift_m),
+                        float(self.cfg.center_refine_extra_max_shift_m),
+                    )
+                )
+                update_cross_shift = extra_shift - update_refine_shift
+                self._apply_lateral_center_shift(candidate_state, extra_shift)
+            candidate_state.tangent_xy = self._realign_tangent_to_motion(
                 prev_hyp.state.center_xyz,
-                state.center_xyz,
-                state.tangent_xy,
+                candidate_state.center_xyz,
+                candidate_state.tangent_xy,
             )
-            state.profile_quality = active_profile.quality
-            state.center_confidence = min(1.0, 0.25 + sc.peak_value + 0.2 * active_profile.quality)
-            state.identity_confidence = max(0.0, min(1.0, sc.identity_score))
-            state.visible_run_steps += 1
-            state.gap_run_steps = 0
+            update_center_after = candidate_state.center_xyz.copy()
+            update_tangent_after = candidate_state.tangent_xy.copy()
+            candidate_state.profile_quality = active_profile.quality
+            candidate_state.center_confidence = min(1.0, 0.25 + sc.peak_value + 0.2 * active_profile.quality)
+            candidate_state.identity_confidence = max(0.0, min(1.0, sc.identity_score))
+            post_loyalty = self._lane_loyalty_term(
+                self._loyalty_history(prev_hyp.state),
+                candidate_state.center_xyz,
+                self._reference_tangent(prev_hyp.state),
+            )
+            if self._fails_loyalty_gate(prev_hyp.state, candidate_state.center_xyz, candidate_state.profile_quality):
+                stripe_visible = False
+                stripe_rejected = True
+                post_loyalty_failed = True
+                if "post_loyalty_gate_failed" not in decision.rejection_reasons:
+                    decision.rejection_reasons.append("post_loyalty_gate_failed")
+            else:
+                state = candidate_state
+                state.visible_run_steps += 1
+                state.gap_run_steps = 0
         if not stripe_visible:
-            prev_tangent = self._unit2(prev_hyp.state.tangent_xy[:2])
+            anchor_prev_center, prev_tangent = self._anchor_projected_frame(
+                prev_hyp.state,
+                prev_hyp.state.center_xyz,
+                prev_hyp.state.tangent_xy,
+            )
             gap_step = float(self.cfg.step_length_m) * float(self.cfg.gap_bridge_step_scale)
-            state.tangent_xy = prev_hyp.state.tangent_xy.copy()
-            state.center_xyz = prev_hyp.state.center_xyz.copy()
+            state.tangent_xy = prev_tangent.copy()
+            state.center_xyz = anchor_prev_center.copy()
             state.center_xyz[0] += prev_tangent[0] * gap_step
             state.center_xyz[1] += prev_tangent[1] * gap_step
             state.total_length_m = float(prev_hyp.state.total_length_m) + gap_step
@@ -482,13 +582,16 @@ class LaneTrackerV2:
         state.history_visibility.append(1 if stripe_visible else 0)
         state.history_modes.append(state.mode.value)
         scores = self._score_transition(prev_hyp.state, state, active_profile, stripe_visible, crosswalk_score)
-        loyalty_term = self._lane_loyalty_term(prev_hyp.state.history_centers, state.center_xyz, prev_hyp.state.tangent_xy)
+        loyalty_term = self._lane_loyalty_term(self._loyalty_history(prev_hyp.state), state.center_xyz, self._reference_tangent(prev_hyp.state))
         loyalty_weight = float(np.clip(self.cfg.lane_loyalty_weight, 0.0, 2.0))
         trajectory_follow = self._trajectory_follow_term(
-            prev_hyp.state.history_centers,
+            self._reference_history(prev_hyp.state),
             state.center_xyz,
-            prev_hyp.state.tangent_xy,
+            self._reference_tangent(prev_hyp.state),
         )
+        if self._should_add_trusted_point(prev_hyp.state, state, stripe_visible, loyalty_term):
+            state.trusted_history_centers.append(state.center_xyz.copy())
+            state.trusted_history_tangents.append(state.tangent_xy.copy())
         trajectory_weight = float(np.clip(self.cfg.trajectory_follow_weight, 0.0, 2.0))
         total_score = prev_hyp.total_score + scores.total + loyalty_weight * loyalty_term + trajectory_weight * trajectory_follow
         return LaneHypothesis(
@@ -508,6 +611,41 @@ class LaneTrackerV2:
                 "stripe_rejected": stripe_rejected,
                 "search_along_half_m": active_along_half,
                 "search_lateral_half_m": active_lateral_half,
+                "obs_debug": {
+                    "source": decision.source,
+                    "candidate_count": len(active_profile.stripe_candidates),
+                    "selected_idx": active_profile.selected_idx,
+                    "selected_center_m": float(active_profile.stripe_candidates[active_profile.selected_idx].center_m)
+                    if active_profile.selected_idx is not None
+                    else None,
+                    "selected_width_m": float(active_profile.stripe_candidates[active_profile.selected_idx].width_m)
+                    if active_profile.selected_idx is not None
+                    else None,
+                    "selected_signal": float(active_profile.stripe_candidates[active_profile.selected_idx].signal_consistency)
+                    if active_profile.selected_idx is not None
+                    else None,
+                },
+                "asc_debug": {
+                    "source": decision.source,
+                    "stripe_visible": stripe_visible,
+                    "stripe_rejected": stripe_rejected,
+                    "reliable_checked": decision.reliable_checked,
+                    "reliable_passed": decision.reliable_passed,
+                    "loyalty_pre": None if decision.loyalty_value is None else float(decision.loyalty_value),
+                    "loyalty_post": None if post_loyalty is None else float(post_loyalty),
+                    "post_loyalty_failed": post_loyalty_failed,
+                    "reasons": list(decision.rejection_reasons),
+                },
+                "upd_debug": {
+                    "profile_shift_m": float(update_profile_shift),
+                    "refine_shift_m": float(update_refine_shift),
+                    "cross_shift_m": float(update_cross_shift),
+                    "total_shift_m": float(update_profile_shift + update_refine_shift + update_cross_shift),
+                    "center_before_xy": [float(update_center_before[0]), float(update_center_before[1])],
+                    "center_after_xy": [float(update_center_after[0]), float(update_center_after[1])],
+                    "tangent_before_xy": [float(update_tangent_before[0]), float(update_tangent_before[1])],
+                    "tangent_after_xy": [float(update_tangent_after[0]), float(update_tangent_after[1])],
+                },
             },
         )
 
@@ -582,6 +720,20 @@ class LaneTrackerV2:
             z_ref=keep * float(current.z_ref) + alpha * float(updated.z_ref),
         )
 
+    def _should_refresh_seed_profile(self, state: LaneState) -> bool:
+        if not self._state_is_currently_trusted(state):
+            return False
+        if state.mode in (TrackMode.GAP_BRIDGING, TrackMode.CROSSWALK_CANDIDATE, TrackMode.STOPPED):
+            return False
+        if float(state.profile_quality) < float(self.cfg.profile_update_min_quality):
+            return False
+        if float(state.identity_confidence) < float(self.cfg.profile_update_min_identity):
+            return False
+        width = float(state.lane_width_m)
+        if width < float(self.cfg.profile_update_min_width_m) or width > float(self.cfg.profile_update_max_width_m):
+            return False
+        return True
+
     def _fit_center_z(self, center_xy: np.ndarray, fallback_z: float) -> float:
         radius = max(float(self.cfg.center_z_fit_radius_m), 1e-3)
         idx = self.grid.query_radius_xy(np.asarray(center_xy[:2], dtype=np.float64), radius)
@@ -624,6 +776,89 @@ class LaneTrackerV2:
         loyalty_offset = abs(candidate_lateral - center_bias)
         tolerance = max(float(self.cfg.lane_loyalty_tolerance_m), 1e-3)
         return float(np.clip(1.0 - loyalty_offset / tolerance, 0.0, 1.0))
+
+    def _fails_loyalty_gate(self, prev_state: LaneState, candidate_center: np.ndarray, profile_quality: float) -> bool:
+        if prev_state.mode == TrackMode.GAP_BRIDGING or prev_state.gap_run_steps > 0:
+            return False
+        ref_history = self._loyalty_history(prev_state)
+        if len(ref_history) < int(self.cfg.loyalty_gate_min_history):
+            return False
+        if float(profile_quality) >= float(self.cfg.loyalty_gate_quality_bypass):
+            return False
+        loyalty = self._lane_loyalty_term(
+            ref_history,
+            candidate_center,
+            self._reference_tangent(prev_state),
+        )
+        return loyalty < float(self.cfg.loyalty_gate_min_visible)
+
+    def _reference_history(self, state: LaneState) -> list[np.ndarray]:
+        min_pts = max(1, int(self.cfg.trusted_history_min_points))
+        if len(state.trusted_history_centers) >= min_pts:
+            return state.trusted_history_centers
+        return state.history_centers
+
+    def _loyalty_history(self, state: LaneState) -> list[np.ndarray]:
+        gate_min = max(1, int(self.cfg.loyalty_gate_min_history))
+        if len(state.trusted_history_centers) >= gate_min:
+            return state.trusted_history_centers
+        if len(state.history_centers) >= gate_min:
+            return state.history_centers
+        return self._reference_history(state)
+
+    def _reference_tangent(self, state: LaneState) -> np.ndarray:
+        min_pts = max(1, int(self.cfg.trusted_history_min_points))
+        if len(state.trusted_history_tangents) >= min_pts:
+            return self._unit2(np.asarray(state.trusted_history_tangents[-1][:2], dtype=np.float64))
+        return self._unit2(np.asarray(state.tangent_xy[:2], dtype=np.float64))
+
+    def _anchor_projected_frame(
+        self,
+        state: LaneState,
+        reference_center: np.ndarray,
+        reference_tangent: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        center = np.asarray(reference_center, dtype=np.float64).copy()
+        tangent = self._unit2(np.asarray(reference_tangent[:2], dtype=np.float64))
+        if not state.trusted_history_centers or not state.trusted_history_tangents:
+            return center, tangent
+        anchor_center = np.asarray(state.trusted_history_centers[-1], dtype=np.float64)
+        anchor_tangent = self._unit2(np.asarray(state.trusted_history_tangents[-1][:2], dtype=np.float64))
+        delta_xy = center[:2] - anchor_center[:2]
+        along = max(float(np.dot(delta_xy, anchor_tangent)), 0.0)
+        center[:2] = anchor_center[:2] + anchor_tangent * along
+        return center, anchor_tangent
+
+    def _should_add_trusted_point(
+        self,
+        prev_state: LaneState,
+        state: LaneState,
+        stripe_visible: bool,
+        loyalty_term: float,
+    ) -> bool:
+        if not stripe_visible:
+            return False
+        if float(state.profile_quality) < float(self.cfg.trusted_update_min_quality):
+            return False
+        if float(loyalty_term) < float(self.cfg.trusted_update_min_loyalty):
+            return False
+        if float(state.identity_confidence) < float(self.cfg.trusted_update_min_identity):
+            return False
+        width = float(state.lane_width_m)
+        if width < float(self.cfg.trusted_update_min_width_m) or width > float(self.cfg.trusted_update_max_width_m):
+            return False
+        return True
+
+    def _state_is_currently_trusted(self, state: LaneState) -> bool:
+        if not state.trusted_history_centers:
+            return False
+        return bool(
+            np.linalg.norm(
+                np.asarray(state.trusted_history_centers[-1][:2], dtype=np.float64)
+                - np.asarray(state.center_xyz[:2], dtype=np.float64)
+            )
+            <= 1e-6
+        )
 
     def _fit_trajectory_tangent(
         self,
@@ -714,44 +949,6 @@ class LaneTrackerV2:
             tangent_xy = fallback_xy
         return anchor_xy, self._unit2(tangent_xy), pts_xy
 
-    def _resolve_search_strip(self, state: LaneState) -> tuple[float, float]:
-        along = float(self.cfg.search_along_half_m)
-        history_len = len(getattr(state, "history_centers", []))
-        lateral = float(self.cfg.init_search_lateral_half_m) if history_len <= 1 else float(self.cfg.step_search_lateral_half_m)
-        if state.mode == TrackMode.GAP_BRIDGING or float(state.profile_quality) < float(self.cfg.recovery_quality_threshold):
-            along = max(along, float(self.cfg.gap_search_along_half_m))
-            lateral = max(lateral, float(self.cfg.gap_search_lateral_half_m))
-        return along, lateral
-
-    def _reanalyze_with_recovery_strip(
-        self,
-        center_xyz: np.ndarray,
-        tangent_xy: np.ndarray,
-        prev_state: LaneState,
-    ) -> tuple[CrossSectionProfile, np.ndarray, float, float]:
-        along = max(float(self.cfg.search_along_half_m), float(self.cfg.gap_search_along_half_m))
-        lateral = max(float(self.cfg.step_search_lateral_half_m), float(self.cfg.gap_search_lateral_half_m))
-        idx = self.grid.query_oriented_strip_xy(
-            center_xyz[:2],
-            tangent_xy,
-            along,
-            lateral,
-        )
-        temp_seed = self.seed_profile
-        if temp_seed is not None:
-            temp_seed = self._refresh_seed_profile(center_xyz, temp_seed)
-        profile = self.cross_analyzer.analyze(
-            self.xyz,
-            self.intensity,
-            idx,
-            center_xyz,
-            tangent_xy,
-            prev_state,
-            temp_seed,
-            True,
-        )
-        return profile, np.asarray(idx, dtype=np.int64), along, lateral
-
     def _is_selected_stripe_reliable(self, profile: CrossSectionProfile, sc, prev_state: LaneState) -> bool:
         quality = float(profile.quality)
         width = float(sc.width_m)
@@ -760,6 +957,7 @@ class LaneTrackerV2:
         peak = float(getattr(sc, "peak_value", 0.0))
         center_cons = float(getattr(sc, "center_consistency", 0.0))
         center_jump = abs(float(sc.center_m - prev_state.stripe_center_m))
+        is_gap_like = prev_state.mode in (TrackMode.GAP_BRIDGING, TrackMode.CROSSWALK_CANDIDATE) or prev_state.gap_run_steps > 0
         salvage_narrow = self._can_salvage_narrow_candidate(profile, sc, prev_state)
         salvage_single = self._can_salvage_single_candidate(profile, sc, prev_state)
         narrow_but_consistent = (
@@ -767,16 +965,21 @@ class LaneTrackerV2:
             and center_cons >= float(self.cfg.min_narrow_candidate_center_consistency)
             and identity >= 0.55
         )
+        if not is_gap_like:
+            if width < float(self.cfg.normal_mode_min_candidate_width_m):
+                return False
+            if candidate_count <= 1 and width < float(self.cfg.normal_mode_single_candidate_min_width_m):
+                return False
         if quality < float(self.cfg.min_profile_quality_visible):
             if not (
                 identity >= 0.60
                 or peak >= float(self.cfg.min_single_candidate_peak_visible)
-                or narrow_but_consistent
-                or salvage_narrow
-                or salvage_single
+                or (is_gap_like and narrow_but_consistent)
+                or (is_gap_like and salvage_narrow)
+                or (is_gap_like and salvage_single)
             ):
                 return False
-        if width < float(self.cfg.min_candidate_width_visible_m) and not (narrow_but_consistent or salvage_narrow):
+        if width < float(self.cfg.min_candidate_width_visible_m) and not (is_gap_like and (narrow_but_consistent or salvage_narrow)):
             return False
         if candidate_count <= 1 and quality < float(self.cfg.min_single_candidate_quality_visible):
             if not (
@@ -785,8 +988,8 @@ class LaneTrackerV2:
                     and peak >= float(self.cfg.min_single_candidate_peak_visible)
                     and center_jump <= float(self.cfg.max_candidate_center_jump_m)
                 )
-                or salvage_narrow
-                or salvage_single
+                or (is_gap_like and salvage_narrow)
+                or (is_gap_like and salvage_single)
             ):
                 return False
         if center_jump > float(self.cfg.max_candidate_center_jump_m) and quality < 0.85:

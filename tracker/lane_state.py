@@ -30,6 +30,8 @@ class LaneState:
     history_tangents: list[Vec2] = field(default_factory=list)
     history_visibility: list[int] = field(default_factory=list)
     history_modes: list[str] = field(default_factory=list)
+    trusted_history_centers: list[Vec3] = field(default_factory=list)
+    trusted_history_tangents: list[Vec2] = field(default_factory=list)
 
     def copy_shallow(self) -> "LaneState":
         return LaneState(
@@ -55,4 +57,6 @@ class LaneState:
             history_tangents=list(self.history_tangents),
             history_visibility=list(self.history_visibility),
             history_modes=list(self.history_modes),
+            trusted_history_centers=list(self.trusted_history_centers),
+            trusted_history_tangents=list(self.trusted_history_tangents),
         )

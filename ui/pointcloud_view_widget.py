@@ -538,9 +538,8 @@ class PointCloudViewWidget(QtWidgets.QWidget):
         if self.plotter is None:
             return None
         try:
-            size = self.plotter.interactor.GetRenderWindow().GetSize()
-            width_px = max(int(size[0]), 1)
-            height_px = max(int(size[1]), 1)
+            width_px = max(int(self.plotter.interactor.width()), 1)
+            height_px = max(int(self.plotter.interactor.height()), 1)
         except Exception as exc:
             self.debug_message.emit(f"_widget_pos_to_local_xy size failed: {exc!r}")
             return None
@@ -677,9 +676,8 @@ class PointCloudViewWidget(QtWidgets.QWidget):
             camera = self.plotter.camera
             focal = camera.GetFocalPoint()
             half_h = float(camera.GetParallelScale())
-            size = self.plotter.interactor.GetRenderWindow().GetSize()
-            width_px = max(int(size[0]), 1)
-            height_px = max(int(size[1]), 1)
+            width_px = max(int(self.plotter.interactor.width()), 1)
+            height_px = max(int(self.plotter.interactor.height()), 1)
             aspect = width_px / max(height_px, 1)
             half_w = half_h * aspect
             margin_x = half_w * 0.30
@@ -701,9 +699,8 @@ class PointCloudViewWidget(QtWidgets.QWidget):
             camera = self.plotter.camera
             focal = camera.GetFocalPoint()
             half_h = float(camera.GetParallelScale())
-            size = self.plotter.interactor.GetRenderWindow().GetSize()
-            width_px = max(int(size[0]), 1)
-            height_px = max(int(size[1]), 1)
+            width_px = max(int(self.plotter.interactor.width()), 1)
+            height_px = max(int(self.plotter.interactor.height()), 1)
             aspect = width_px / max(height_px, 1)
             half_w = half_h * aspect
             return (

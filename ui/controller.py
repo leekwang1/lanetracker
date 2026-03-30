@@ -18,10 +18,12 @@ class TrackerController(QtCore.QObject):
         self.model = ViewerModel()
         self.las = None
         self.tracker = None
+        self._tracker_cfg = TrackerV2Config()
         self._detail_log_enabled = False
 
     def load_las(self, path: str) -> None:
         self.las = load_las_xyz_intensity(path)
+        self.tracker = None
         self.model.xyz = self.las.xyz
         self.model.xy = self.las.xyz[:, :2]
         self.model.intensity = self.las.intensity
@@ -50,7 +52,15 @@ class TrackerController(QtCore.QObject):
     def initialize_tracker(self) -> None:
         if self.las is None or self.model.p0 is None or self.model.p1 is None:
             raise RuntimeError("LAS, P0, P1 are required")
-        self.tracker = LaneTrackerV2(self.las.xyz, self.las.intensity, TrackerV2Config())
+        reuse_tracker = (
+            self.tracker is not None
+            and self.tracker.xyz is self.las.xyz
+            and self.tracker.intensity is self.las.intensity
+        )
+        if reuse_tracker:
+            self.tracker.reset()
+        else:
+            self.tracker = LaneTrackerV2(self.las.xyz, self.las.intensity, self._tracker_cfg)
         self.tracker.initialize(self.model.p0, self.model.p1)
         state = self.tracker.get_current_state()
         self.model.current_point = state.center_xyz.copy() if state is not None else None
@@ -65,7 +75,10 @@ class TrackerController(QtCore.QObject):
         self._update_profile_overlay(state, self.model.profile)
         self._update_search_box_overlay(state, self.tracker.debug_frames[-1] if self.tracker.debug_frames else None)
         self.model.status_text = f"Initialized | mode={state.mode.value if state is not None else 'unknown'}"
-        self.log_message.emit("Tracker initialized")
+        self.log_message.emit(
+            "Tracker initialized"
+            + (" | reused spatial grid" if reuse_tracker else "")
+        )
         if state is not None:
             self._emit_state_debug_log("INIT", state, self.model.profile, self.tracker.debug_frames[-1] if self.tracker.debug_frames else None)
         self.changed.emit()
@@ -121,7 +134,8 @@ class TrackerController(QtCore.QObject):
         return result
 
     def reset(self):
-        self.tracker = None
+        if self.tracker is not None:
+            self.tracker.reset()
         self.model.track_points = None
         self.model.current_point = None
         self.model.predicted_points = None
@@ -140,6 +154,14 @@ class TrackerController(QtCore.QObject):
         self.log_message.emit(f"Detail log {'enabled' if enabled else 'disabled'}")
 
     def _emit_state_debug_log(self, label: str, state, profile, dbg) -> None:
+        def _fmt_optional(value, digits: int = 3) -> str:
+            if value is None:
+                return "na"
+            try:
+                return f"{float(value):.{digits}f}"
+            except Exception:
+                return str(value)
+
         tangent = np.asarray(state.tangent_xy, dtype=float)
         tangent_norm = float(np.linalg.norm(tangent))
         if tangent_norm > 1e-9:
@@ -189,8 +211,10 @@ class TrackerController(QtCore.QObject):
             lateral_half = float(getattr(dbg, "search_lateral_half_m", lateral_half) or lateral_half)
 
         lane_loyalty = 0.0
+        debug_last = {}
         if dbg is not None:
-            lane_loyalty = float(getattr(self.tracker.hypotheses[0], "debug_last", {}).get("lane_loyalty", 0.0)) if self.tracker and self.tracker.hypotheses else 0.0
+            debug_last = getattr(self.tracker.hypotheses[0], "debug_last", {}) if self.tracker and self.tracker.hypotheses else {}
+            lane_loyalty = float(debug_last.get("lane_loyalty", 0.0))
 
         stripe_status = "none"
         if selected_center_m is not None:
@@ -223,6 +247,43 @@ class TrackerController(QtCore.QObject):
                 f"strip=({along_half:.2f}, {lateral_half:.2f})"
             )
         if dbg is not None:
+            obs_debug = debug_last.get("obs_debug", {}) if isinstance(debug_last, dict) else {}
+            asc_debug = debug_last.get("asc_debug", {}) if isinstance(debug_last, dict) else {}
+            upd_debug = debug_last.get("upd_debug", {}) if isinstance(debug_last, dict) else {}
+            if obs_debug:
+                lines.append(
+                    "OBS | "
+                    f"src={obs_debug.get('source', 'primary')} | "
+                    f"cand={int(obs_debug.get('candidate_count', 0))} | "
+                    f"sel_idx={obs_debug.get('selected_idx', 'None')} | "
+                    f"center={obs_debug.get('selected_center_m', 'None')} | "
+                    f"width={obs_debug.get('selected_width_m', 'None')} | "
+                    f"signal={obs_debug.get('selected_signal', 'None')}"
+                )
+            if asc_debug:
+                reasons = asc_debug.get("reasons", []) or []
+                reason_text = ",".join(str(v) for v in reasons) if reasons else "accepted"
+                lines.append(
+                    "ASC | "
+                    f"src={asc_debug.get('source', 'primary')} | "
+                    f"used={'yes' if stripe_status == 'used' else 'no'} | "
+                    f"reliable={asc_debug.get('reliable_passed', False)} | "
+                    f"loyalty_pre={_fmt_optional(asc_debug.get('loyalty_pre'))} | "
+                    f"loyalty_post={_fmt_optional(asc_debug.get('loyalty_post'))} | "
+                    f"reasons={reason_text}"
+                )
+            if upd_debug:
+                tan_before = upd_debug.get("tangent_before_xy", [0.0, 0.0])
+                tan_after = upd_debug.get("tangent_after_xy", [0.0, 0.0])
+                lines.append(
+                    "UPD | "
+                    f"shift=({float(upd_debug.get('profile_shift_m', 0.0)):.4f}, "
+                    f"{float(upd_debug.get('refine_shift_m', 0.0)):.4f}, "
+                    f"{float(upd_debug.get('cross_shift_m', 0.0)):.4f}) | "
+                    f"total={float(upd_debug.get('total_shift_m', 0.0)):.4f} | "
+                    f"tan=({float(tan_before[0]):.3f}, {float(tan_before[1]):.3f})"
+                    f"->({float(tan_after[0]):.3f}, {float(tan_after[1]):.3f})"
+                )
             lines.append(
                 "debug="
                 f"stop={dbg.stop_reason or 'none'}, "

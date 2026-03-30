@@ -104,7 +104,7 @@ class MainWindow(QtWidgets.QMainWindow):
         btn_init.clicked.connect(self.on_init)
         btn_step.clicked.connect(self.on_step)
         btn_full.clicked.connect(self.on_full)
-        btn_reset.clicked.connect(self.controller.reset)
+        btn_reset.clicked.connect(self.on_reset)
         self.controller.changed.connect(self.refresh)
         self.controller.log_message.connect(self.log.appendPlainText)
         self.view.point_context_menu_requested.connect(self._open_point_context_menu)
@@ -150,6 +150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(p0) != 3 or len(p1) != 3:
             self._show_error("P0 and P1 must each contain exactly 3 numbers: x y z")
             return
+        self.log.clear()
         if self._run_action(
             "Initializing tracker...",
             lambda: self._initialize_with_points(p0, p1),
@@ -162,6 +163,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_full(self):
         self._run_action("Running full tracker...", self.controller.run_full)
+
+    def on_reset(self):
+        self.log.clear()
+        self.controller.reset()
 
     def _initialize_with_points(self, p0, p1):
         self.controller.set_p0(*p0)
