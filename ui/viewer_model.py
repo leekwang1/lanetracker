@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import numpy as np
 
-from ..tracker.cross_section_profile import CrossSectionProfile
+import numpy as np
 
 
 @dataclass
@@ -21,9 +20,9 @@ class ViewerModel:
     stripe_segment_points: np.ndarray | None = None
     stripe_edge_points: np.ndarray | None = None
     search_box_points: np.ndarray | None = None
-    profile: CrossSectionProfile | None = None
+    candidate_circle_groups: list[np.ndarray] | None = None
+    selected_circle_points: np.ndarray | None = None
+    profile: object | None = None
     status_text: str = ""
     point_cloud_revision: int = 0
-    stripe_left: float | None = None
-    stripe_right: float | None = None
     messages: list[str] = field(default_factory=list)

@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "D:\Conda_envs\lane_tracker\lane_tracker_v2\app\app_main.py", line 19, in main
+    from PySide6 import QtCore, QtWidgets
+ModuleNotFoundError: No module named 'PySide6'
