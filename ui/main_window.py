@@ -107,6 +107,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.p1_edit.setText(" ".join(f"{float(v):.10f}" for v in p1))
 
         self._connect_signals()
+        self._install_shortcuts()
         self._load_config_into_ui(self.controller.get_config())
         self._set_config_collapsed(True)
 
@@ -143,10 +144,11 @@ class MainWindow(QtWidgets.QMainWindow):
         btn_row = QtWidgets.QHBoxLayout()
         self.btn_load = QtWidgets.QPushButton("Load LAS")
         self.btn_init = QtWidgets.QPushButton("Initialize")
+        self.btn_back = QtWidgets.QPushButton("Back One Step")
         self.btn_step = QtWidgets.QPushButton("Run One Step")
         self.btn_full = QtWidgets.QPushButton("Run Full")
         self.btn_reset = QtWidgets.QPushButton("Reset")
-        for btn in [self.btn_load, self.btn_init, self.btn_step, self.btn_full, self.btn_reset]:
+        for btn in [self.btn_load, self.btn_init, self.btn_back, self.btn_step, self.btn_full, self.btn_reset]:
             btn_row.addWidget(btn)
         form.addRow(btn_row)
 
@@ -252,6 +254,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_browse_cfg.clicked.connect(self.on_browse_config)
         self.btn_load.clicked.connect(self.on_load)
         self.btn_init.clicked.connect(self.on_init)
+        self.btn_back.clicked.connect(self.on_back)
         self.btn_step.clicked.connect(self.on_step)
         self.btn_full.clicked.connect(self.on_full)
         self.btn_reset.clicked.connect(self.on_reset)
@@ -266,6 +269,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.point_context_menu_requested.connect(self._open_point_context_menu)
         self.view.debug_message.connect(lambda msg: self.log.appendPlainText(f"VIEW: {msg}"))
         self.view_log_check.toggled.connect(self.view.set_view_log_enabled)
+
+    def _install_shortcuts(self) -> None:
+        self._step_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Space), self)
+        self._step_shortcut.setContext(QtCore.Qt.WindowShortcut)
+        self._step_shortcut.activated.connect(self._on_space_step)
+        self._undo_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtGui.QKeySequence.Undo), self)
+        self._undo_shortcut.setContext(QtCore.Qt.WindowShortcut)
+        self._undo_shortcut.activated.connect(self._on_back_shortcut)
+        self._undo_backspace_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Backspace), self)
+        self._undo_backspace_shortcut.setContext(QtCore.Qt.WindowShortcut)
+        self._undo_backspace_shortcut.activated.connect(self._on_back_shortcut)
 
     def _set_default_las_path(self, las_path: str | None) -> None:
         if las_path:
@@ -373,6 +387,40 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_step(self) -> None:
         if self._run_action("Running one step...", self.controller.run_step):
             self.view.focus_on_point(self.controller.model.current_point)
+
+    def on_back(self) -> None:
+        if self._run_action("Restoring previous step...", self.controller.undo_step):
+            self.view.focus_on_point(self.controller.model.current_point)
+
+    def _on_space_step(self) -> None:
+        if not self._can_trigger_global_shortcut():
+            return
+        self.on_step()
+
+    def _on_back_shortcut(self) -> None:
+        if not self._can_trigger_global_shortcut():
+            return
+        self.on_back()
+
+    def _can_trigger_global_shortcut(self) -> bool:
+        focus = QtWidgets.QApplication.focusWidget()
+        if focus is None:
+            return True
+        if isinstance(
+            focus,
+            (
+                QtWidgets.QLineEdit,
+                QtWidgets.QTextEdit,
+                QtWidgets.QPlainTextEdit,
+                QtWidgets.QAbstractSpinBox,
+                QtWidgets.QComboBox,
+                QtWidgets.QAbstractButton,
+                QtWidgets.QAbstractItemView,
+                QtWidgets.QSlider,
+            ),
+        ):
+            return False
+        return True
 
     def on_full(self) -> None:
         self._run_action("Running full tracker...", self.controller.run_full)

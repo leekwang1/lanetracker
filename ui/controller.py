@@ -8,7 +8,7 @@ import numpy as np
 from ..core.types import StopReason, TrackMode
 from ..io.las_io import load_las_xyz_intensity
 from ..tracker.config import DEFAULT_CONFIG_PATH, TrackerConfig, ensure_config_file, load_tracker_config, save_tracker_config
-from ..tracker.lane_tracker_bev_graph import BevGraphTracker, DebugFrame, TrackerResult, TrackerState
+from ..tracker.lane_tracker_bev_graph import BevGraphTracker, DebugFrame, TrackerResult, TrackerSnapshot, TrackerState
 from .viewer_model import ViewerModel
 
 
@@ -21,6 +21,7 @@ class TrackerController(QtCore.QObject):
         self.model = ViewerModel()
         self.las = None
         self.tracker: BevGraphTracker | None = None
+        self._undo_stack: list[TrackerSnapshot] = []
         self._config_path = ensure_config_file(DEFAULT_CONFIG_PATH)
         self._tracker_cfg = load_tracker_config(self._config_path)
 
@@ -63,6 +64,7 @@ class TrackerController(QtCore.QObject):
     def load_las(self, path: str) -> None:
         self.las = load_las_xyz_intensity(path)
         self.tracker = None
+        self._undo_stack = []
         self.model.xyz = self.las.xyz
         self.model.xy = self.las.xyz[:, :2]
         self.model.intensity = self.las.intensity
@@ -107,6 +109,7 @@ class TrackerController(QtCore.QObject):
             self.tracker = BevGraphTracker(self.las.xyz, self.las.intensity, self._tracker_cfg)
 
         self.tracker.initialize(self.model.p0, self.model.p1)
+        self._undo_stack = [self.tracker.make_snapshot()]
         self._update_model_from_tracker(self.tracker.get_current_state(), self.tracker.get_last_debug_frame())
         self.model.status_text = f"Initialized | mode={self.tracker.get_current_state().mode.value}"
         self.log_message.emit(
@@ -140,10 +143,30 @@ class TrackerController(QtCore.QObject):
             self.changed.emit()
             return self.tracker.get_last_debug_frame()
         dbg = self.tracker.step()
+        self._undo_stack.append(self.tracker.make_snapshot())
         self._update_model_from_tracker(self.tracker.get_current_state(), dbg)
         self.model.status_text = f"Step {dbg.step_index} | mode={self.tracker.get_current_state().mode.value} | stop={dbg.stop_reason or 'none'}"
         self.log_message.emit(f"Step {dbg.step_index}: mode={self.tracker.get_current_state().mode.value}, stop={dbg.stop_reason or 'none'}")
         self._emit_state_log(f"STEP {dbg.step_index}", self.tracker.get_current_state(), dbg)
+        self.changed.emit()
+        return dbg
+
+    def undo_step(self) -> DebugFrame | None:
+        if self.tracker is None:
+            raise RuntimeError("Tracker not initialized.")
+        if len(self._undo_stack) <= 1:
+            raise RuntimeError("No earlier step to restore.")
+        self._undo_stack.pop()
+        snapshot = self._undo_stack[-1]
+        self.tracker.restore_snapshot(snapshot)
+        dbg = self.tracker.get_last_debug_frame()
+        self._update_model_from_tracker(self.tracker.get_current_state(), dbg)
+        state = self.tracker.get_current_state()
+        step_index = dbg.step_index if dbg is not None else 0
+        mode = state.mode.value if state is not None else "na"
+        self.model.status_text = f"Undo to step {step_index} | mode={mode}"
+        self.log_message.emit(f"Undo: restored step {step_index}, mode={mode}")
+        self._emit_state_log(f"UNDO {step_index}", state, dbg)
         self.changed.emit()
         return dbg
 
@@ -162,6 +185,7 @@ class TrackerController(QtCore.QObject):
     def reset(self) -> None:
         if self.tracker is not None:
             self.tracker.reset()
+        self._undo_stack = []
         self.model.track_points = None
         self.model.current_point = None
         self.model.predicted_points = None

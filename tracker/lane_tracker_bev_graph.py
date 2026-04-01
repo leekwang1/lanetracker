@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 import math
 
@@ -195,6 +196,18 @@ class TrackerResult:
 
 
 @dataclass
+class TrackerSnapshot:
+    state: TrackerState | None
+    debug_frames: list[DebugFrame]
+    stop_reason: StopReason
+    distance_travelled_m: float
+    step_index: int
+    p0: np.ndarray | None
+    p1: np.ndarray | None
+    init_summary: dict[str, float | int | str]
+
+
+@dataclass
 class PathHypothesis:
     node_ids: list[int]
     cumulative_score: float
@@ -234,6 +247,28 @@ class BevGraphTracker:
 
     def get_last_debug_frame(self) -> DebugFrame | None:
         return self.debug_frames[-1] if self.debug_frames else None
+
+    def make_snapshot(self) -> TrackerSnapshot:
+        return TrackerSnapshot(
+            state=copy.deepcopy(self.state),
+            debug_frames=copy.deepcopy(self.debug_frames),
+            stop_reason=self.stop_reason,
+            distance_travelled_m=float(self._distance_travelled_m),
+            step_index=int(self._step_index),
+            p0=None if self._p0 is None else np.asarray(self._p0, dtype=np.float64).copy(),
+            p1=None if self._p1 is None else np.asarray(self._p1, dtype=np.float64).copy(),
+            init_summary=copy.deepcopy(self._init_summary),
+        )
+
+    def restore_snapshot(self, snapshot: TrackerSnapshot) -> None:
+        self.state = copy.deepcopy(snapshot.state)
+        self.debug_frames = copy.deepcopy(snapshot.debug_frames)
+        self.stop_reason = snapshot.stop_reason
+        self._distance_travelled_m = float(snapshot.distance_travelled_m)
+        self._step_index = int(snapshot.step_index)
+        self._p0 = None if snapshot.p0 is None else np.asarray(snapshot.p0, dtype=np.float64).copy()
+        self._p1 = None if snapshot.p1 is None else np.asarray(snapshot.p1, dtype=np.float64).copy()
+        self._init_summary = copy.deepcopy(snapshot.init_summary)
 
     def initialize(self, p0_xyz: np.ndarray, p1_xyz: np.ndarray) -> None:
         self.reset()
@@ -742,36 +777,33 @@ class BevGraphTracker:
         component_scores: dict[int, float],
     ) -> list[PathHypothesis]:
         nodes_by_id = {n.node_id: n for n in nodes}
+        state_heading = _normalize(self.state.tangent_xy) if self.state is not None else np.array([1.0, 0.0], dtype=np.float64)
         state_lateral_center = float(self.state.stripe_center_m) if self.state is not None else 0.0
+        lane_width_m = float(self.state.lane_width_m) if self.state is not None else 0.18
+        start_along_limit_m = max(self.cfg.forward_distance_m * 1.8, self.cfg.graph_cell_size_m * 2.0)
         start_corridor_half_m = max(
             self.cfg.graph_neighbor_lateral_limit_m * 1.25,
-            (float(self.state.lane_width_m) if self.state is not None else 0.18) * 0.90,
+            lane_width_m * 0.90,
             0.16,
         )
-        branch_lateral_gate_m = max(self.cfg.graph_neighbor_lateral_limit_m * 0.90, 0.14)
-        if component_scores:
-            ordered_components = sorted(component_scores.items(), key=lambda item: item[1], reverse=True)
-            best_comp_score = ordered_components[0][1]
-            allowed_components = {
-                comp_id
-                for comp_id, score in ordered_components[:2]
-                if score >= best_comp_score - 0.08
-            }
-        else:
-            allowed_components = set()
+        ranked_components = [
+            component_id
+            for component_id, _score in sorted(component_scores.items(), key=lambda item: item[1], reverse=True)
+        ]
+        allowed_components = set(ranked_components[:2]) if ranked_components else set()
+
         start_nodes = [
             n
             for n in nodes
-            if n.along_m <= max(self.cfg.forward_distance_m * 1.8, self.cfg.graph_cell_size_m * 2.0)
+            if n.along_m <= start_along_limit_m
             and abs(n.lateral_m - state_lateral_center) <= start_corridor_half_m
             and (not allowed_components or n.component_id in allowed_components)
         ]
         if not start_nodes:
-            fallback_nodes = [n for n in nodes if not allowed_components or n.component_id in allowed_components]
-            start_nodes = sorted(
-                fallback_nodes if fallback_nodes else nodes,
-                key=lambda n: (-component_scores.get(n.component_id, 0.0), abs(n.lateral_m), n.along_m),
-            )[: max(1, self.cfg.graph_beam_branching)]
+            start_nodes = [n for n in nodes if not allowed_components or n.component_id in allowed_components]
+        if not start_nodes:
+            start_nodes = list(nodes)
+            allowed_components = set()
 
         beam: list[PathHypothesis] = []
         for node in sorted(
@@ -806,8 +838,6 @@ class BevGraphTracker:
                 for next_id, dist, angle in candidates:
                     next_node = nodes_by_id[next_id]
                     if allowed_components and next_node.component_id not in allowed_components:
-                        continue
-                    if abs(next_node.lateral_m - hyp.endpoint_lateral_m) > branch_lateral_gate_m:
                         continue
                     edge_score = self._transition_score(last_node, next_node, hyp.last_angle_rad, dist, angle)
                     total = self._node_base_score(next_node) + edge_score + 0.10 * component_scores.get(next_node.component_id, 0.0)

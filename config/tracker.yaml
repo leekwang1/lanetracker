@@ -12,7 +12,7 @@ graph_roi_lateral_half_m: 1.2
 # BEV 셀 크기(m). 작을수록 세밀하지만 느려질 수 있음
 graph_cell_size_m: 0.05
 # active cell로 살릴 최소 intensity 정규화 임계값
-graph_active_intensity_min: 0.62
+graph_active_intensity_min: 0.5
 # active cell로 살릴 최소 local contrast 임계값
 graph_active_contrast_min: 0.1
 # 셀 하나를 유효하다고 볼 최소 포인트 개수
@@ -26,7 +26,7 @@ segment_target_length_m: 0.5
 # 한 segment의 최대 길이(m)
 segment_max_length_m: 1.0
 # segment 방향 허용 오차(deg)
-segment_heading_gate_deg: 28.0
+segment_heading_gate_deg: 5.0
 
 # [4. Graph Connection]
 # segment/node를 이웃으로 연결할 최대 거리(m)
@@ -38,21 +38,21 @@ graph_neighbor_lateral_limit_m: 0.18
 # 매 단계 유지할 가설(path) 개수
 graph_beam_width: 6
 # 앞으로 미리 볼 node 깊이
-graph_beam_horizon_nodes: 8
+graph_beam_horizon_nodes: 15
 # 각 node에서 확장할 최대 후보 수
 graph_beam_branching: 5
 
 # [6. Score Weights]
 # 강한 intensity를 선호하는 가중치
-graph_intensity_weight: 0.3
+graph_intensity_weight: 0.25
 # 배경 대비가 큰 후보를 선호하는 가중치
 graph_contrast_weight: 0.18
 # 방향/곡률 연속성 가중치
-graph_direction_weight: 0.16
-# 과도한 거리 점프를 억제하는 가중치
-graph_distance_weight: 0.1
+graph_direction_weight: 0.25
+# 과도한 5거리 점프를 억제하는 가중치
+graph_distance_weight: 0.125
 # 최근 궤적 일관성 가중치
-graph_history_weight: 0.16
+graph_history_weight: 0.25
 # 점선 주기/반복성 가중치
 graph_period_weight: 0.1
 # 횡단보도 패턴 쪽으로 끌리는 것을 억제하는 패널티
@@ -97,7 +97,7 @@ solid_occupancy_min: 0.58
 gap_forward_distance_m: 10.0
 # 연속성 계산에 참조할 최근 node/step 개수
 continuity_node_count: 6
-# 연속성 패널티 강도
+# 연속성 벌점 강도
 continuity_strength: 1.5
 
 # [10. Z Filtering]
