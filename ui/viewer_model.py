@@ -15,6 +15,8 @@ class ViewerModel:
     track_points: np.ndarray | None = None
     current_point: np.ndarray | None = None
     predicted_points: np.ndarray | None = None
+    active_cell_box_groups: list[np.ndarray] | None = None
+    segment_groups: list[np.ndarray] | None = None
     trajectory_line_points: np.ndarray | None = None
     profile_line_points: np.ndarray | None = None
     stripe_segment_points: np.ndarray | None = None

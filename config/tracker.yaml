@@ -1,49 +1,121 @@
+# [1. Basic Tracking]
+# 한 step에서 실제로 전진할 거리(m)
 forward_distance_m: 0.3
-graph_roi_forward_m: 3.0
-graph_roi_lateral_half_m: 1.2
-graph_cell_size_m: 0.05
-graph_active_intensity_min: 0.62
-graph_active_contrast_min: 0.1
-graph_min_cell_points: 2
-graph_neighbor_max_distance_m: 0.18
-graph_neighbor_lateral_limit_m: 0.18
-segment_min_length_m: 0.2
-segment_target_length_m: 0.5
-segment_max_length_m: 1.0
-segment_heading_gate_deg: 28.0
-graph_beam_width: 6
-graph_beam_horizon_nodes: 8
-graph_beam_branching: 5
-graph_intensity_weight: 0.3
-graph_contrast_weight: 0.18
-graph_direction_weight: 0.16
-graph_distance_weight: 0.1
-graph_history_weight: 0.16
-graph_period_weight: 0.1
-graph_crosswalk_penalty: 0.08
-z_clip_half_range_m: 0.3
-use_z_clip: true
-gap_forward_distance_m: 10.0
-continuity_node_count: 6
-continuity_strength: 1.5
-crosswalk_stop_enabled: true
-spatial_grid_cell_size_m: 0.1
+# run_full 시 최대 누적 추적 거리(m)
 max_track_length_m: 120.0
+
+# [2. Local ROI And BEV Cells]
+# 현재 위치 앞쪽으로 볼 ROI 길이(m)
+graph_roi_forward_m: 3.0
+# ROI 좌우 반폭(m)
+graph_roi_lateral_half_m: 1.2
+# BEV 셀 크기(m). 작을수록 세밀하지만 느려질 수 있음
+graph_cell_size_m: 0.05
+# active cell로 살릴 최소 intensity 정규화 임계값
+graph_active_intensity_min: 0.62
+# active cell로 살릴 최소 local contrast 임계값
+graph_active_contrast_min: 0.1
+# 셀 하나를 유효하다고 볼 최소 포인트 개수
+graph_min_cell_points: 2
+
+# [3. Segment Extraction]
+# segment로 인정할 최소 길이(m)
+segment_min_length_m: 0.2
+# segment를 쪼갤 때 목표 길이(m)
+segment_target_length_m: 0.5
+# 한 segment의 최대 길이(m)
+segment_max_length_m: 1.0
+# segment 방향 허용 오차(deg)
+segment_heading_gate_deg: 28.0
+
+# [4. Graph Connection]
+# segment/node를 이웃으로 연결할 최대 거리(m)
+graph_neighbor_max_distance_m: 0.18
+# 이웃 연결 시 허용할 최대 lateral 차이(m)
+graph_neighbor_lateral_limit_m: 0.18
+
+# [5. Beam Search]
+# 매 단계 유지할 가설(path) 개수
+graph_beam_width: 6
+# 앞으로 미리 볼 node 깊이
+graph_beam_horizon_nodes: 8
+# 각 node에서 확장할 최대 후보 수
+graph_beam_branching: 5
+
+# [6. Score Weights]
+# 강한 intensity를 선호하는 가중치
+graph_intensity_weight: 0.3
+# 배경 대비가 큰 후보를 선호하는 가중치
+graph_contrast_weight: 0.18
+# 방향/곡률 연속성 가중치
+graph_direction_weight: 0.16
+# 과도한 거리 점프를 억제하는 가중치
+graph_distance_weight: 0.1
+# 최근 궤적 일관성 가중치
+graph_history_weight: 0.16
+# 점선 주기/반복성 가중치
+graph_period_weight: 0.1
+# 횡단보도 패턴 쪽으로 끌리는 것을 억제하는 패널티
+graph_crosswalk_penalty: 0.08
+
+# [7. Profile And Stripe Geometry]
+# 횡단면 프로파일을 볼 좌우 반폭(m)
 profile_lateral_half_m: 0.45
+# 프로파일 계산 시 사용할 앞뒤 반길이(m)
 profile_along_half_m: 0.1
+# 프로파일 lateral bin 크기(m)
 profile_bin_size_m: 0.01
+# 유효한 stripe 최소 폭(m)
 twin_edge_min_width_m: 0.08
+# 유효한 stripe 최대 폭(m)
 twin_edge_max_width_m: 0.24
+# twin-edge 검출용 최소 gradient 임계값
 edge_grad_min: 0.1
+# 프로파일 후보를 인정할 최소 support point 수
 candidate_min_support: 5
+# 최종 후보를 채택할 최소 점수
 candidate_min_score: 0.3
+
+# [8. Along Signal And Dashed Pattern]
+# 진행방향 1D signal을 계산할 앞뒤 반길이(m)
 along_signal_half_m: 1.2
+# 진행방향 signal bin 크기(m)
 along_signal_bin_m: 0.05
+# 진행방향 signal을 모을 stripe 주변 반폭(m)
 along_signal_lateral_half_m: 0.12
+# 점선 주기로 인정할 최소 period(m)
 autocorr_min_period_m: 0.25
+# 점선 주기로 인정할 최대 period(m)
 autocorr_max_period_m: 1.2
+# 점선으로 보기 위한 최소 autocorr 점수
 dashed_autocorr_min: 0.2
+# 실선으로 보기 위한 최소 occupancy 기준
 solid_occupancy_min: 0.58
+
+# [9. Gap And Continuity]
+# 관측이 끊겨도 예측만으로 버틸 최대 거리(m)
+gap_forward_distance_m: 10.0
+# 연속성 계산에 참조할 최근 node/step 개수
+continuity_node_count: 6
+# 연속성 패널티 강도
+continuity_strength: 1.5
+
+# [10. Z Filtering]
+# true면 현재 차선 높이 주변 Z만 사용
+use_z_clip: true
+# 사용할 Z 반폭(m). 예: 0.3이면 +-30cm
+z_clip_half_range_m: 0.3
+
+# [11. Crosswalk Handling]
+# true면 횡단보도 패턴에서 정지
+crosswalk_stop_enabled: true
+# 횡단보도 패턴을 검사할 전방 길이(m)
 crosswalk_lookahead_m: 1.6
+# 횡단보도 검사 좌우 반폭(m)
 crosswalk_lateral_half_m: 1.2
+# 횡단보도로 보기 위한 최소 반복 peak 수
 crosswalk_min_peaks: 4
+
+# [12. Internal Grid]
+# 근접 질의용 내부 spatial grid 셀 크기(m)
+spatial_grid_cell_size_m: 0.1

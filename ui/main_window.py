@@ -4,10 +4,63 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..tracker.config import DEFAULT_CONFIG_PATH, TrackerConfig
+from ..tracker.config import CONFIG_GROUPS, DEFAULT_CONFIG_PATH, TrackerConfig
 from .controller import TrackerController
 from .pointcloud_view_widget import PointCloudViewWidget
 from .profile_plot_widget import ProfilePlotWidget
+
+
+CONFIG_WIDGET_SPECS: dict[str, tuple] = {
+    "forward_distance_m": ("float", 0.05, 1.0, 0.01),
+    "max_track_length_m": ("float", 1.0, 500.0, 1.0),
+    "graph_roi_forward_m": ("float", 0.5, 8.0, 0.1),
+    "graph_roi_lateral_half_m": ("float", 0.2, 3.0, 0.05),
+    "graph_cell_size_m": ("float", 0.01, 0.20, 0.01),
+    "graph_active_intensity_min": ("float", 0.0, 1.0, 0.01),
+    "graph_active_contrast_min": ("float", 0.0, 1.0, 0.01),
+    "graph_min_cell_points": ("int", 1, 20),
+    "segment_min_length_m": ("float", 0.05, 2.0, 0.01),
+    "segment_target_length_m": ("float", 0.05, 2.0, 0.01),
+    "segment_max_length_m": ("float", 0.05, 3.0, 0.01),
+    "segment_heading_gate_deg": ("float", 1.0, 90.0, 1.0),
+    "graph_neighbor_max_distance_m": ("float", 0.05, 1.0, 0.01),
+    "graph_neighbor_lateral_limit_m": ("float", 0.05, 1.0, 0.01),
+    "graph_beam_width": ("int", 1, 24),
+    "graph_beam_horizon_nodes": ("int", 1, 24),
+    "graph_beam_branching": ("int", 1, 16),
+    "graph_intensity_weight": ("float", 0.0, 1.0, 0.01),
+    "graph_contrast_weight": ("float", 0.0, 1.0, 0.01),
+    "graph_direction_weight": ("float", 0.0, 1.0, 0.01),
+    "graph_distance_weight": ("float", 0.0, 1.0, 0.01),
+    "graph_history_weight": ("float", 0.0, 1.0, 0.01),
+    "graph_period_weight": ("float", 0.0, 1.0, 0.01),
+    "graph_crosswalk_penalty": ("float", 0.0, 1.0, 0.01),
+    "profile_lateral_half_m": ("float", 0.05, 2.0, 0.01),
+    "profile_along_half_m": ("float", 0.01, 1.0, 0.01),
+    "profile_bin_size_m": ("float", 0.001, 0.10, 0.001),
+    "twin_edge_min_width_m": ("float", 0.01, 1.0, 0.01),
+    "twin_edge_max_width_m": ("float", 0.01, 1.0, 0.01),
+    "edge_grad_min": ("float", 0.0, 2.0, 0.01),
+    "candidate_min_support": ("int", 1, 100),
+    "candidate_min_score": ("float", 0.0, 1.0, 0.01),
+    "along_signal_half_m": ("float", 0.1, 5.0, 0.05),
+    "along_signal_bin_m": ("float", 0.005, 0.20, 0.005),
+    "along_signal_lateral_half_m": ("float", 0.01, 1.0, 0.01),
+    "autocorr_min_period_m": ("float", 0.05, 5.0, 0.05),
+    "autocorr_max_period_m": ("float", 0.05, 5.0, 0.05),
+    "dashed_autocorr_min": ("float", 0.0, 1.0, 0.01),
+    "solid_occupancy_min": ("float", 0.0, 1.0, 0.01),
+    "gap_forward_distance_m": ("float", 0.5, 20.0, 0.1),
+    "continuity_node_count": ("int", 2, 20),
+    "continuity_strength": ("float", 0.0, 10.0, 0.1),
+    "use_z_clip": ("bool",),
+    "z_clip_half_range_m": ("float", 0.05, 1.0, 0.01),
+    "crosswalk_stop_enabled": ("bool",),
+    "crosswalk_lookahead_m": ("float", 0.1, 10.0, 0.1),
+    "crosswalk_lateral_half_m": ("float", 0.1, 5.0, 0.1),
+    "crosswalk_min_peaks": ("int", 1, 20),
+    "spatial_grid_cell_size_m": ("float", 0.01, 1.0, 0.01),
+}
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -36,13 +89,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._config_collapsed = True
 
         self._config_widgets: dict[str, QtWidgets.QWidget] = {}
-
+        self._config_group_titles: list[str] = []
+        self._config_group_rows: dict[int, list[tuple[QtWidgets.QWidget, str, str]]] = {}
+        
         central = QtWidgets.QSplitter()
         central.addWidget(self.view)
         central.addWidget(self._build_side_panel())
         central.setStretchFactor(0, 3)
         central.setStretchFactor(1, 2)
-        central.setSizes([1000, 640])
+        central.setSizes([1000, 800])
         self.setCentralWidget(central)
 
         self._set_default_las_path(las_path)
@@ -113,6 +168,7 @@ class MainWindow(QtWidgets.QMainWindow):
         outer.addWidget(self.btn_toggle_cfg)
 
         self.config_body = QtWidgets.QWidget()
+        self.config_body.setMaximumHeight(430)
         body_layout = QtWidgets.QVBoxLayout(self.config_body)
         body_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -125,67 +181,62 @@ class MainWindow(QtWidgets.QMainWindow):
         path_row.addWidget(self.btn_browse_cfg)
         body_layout.addLayout(path_row)
 
-        form = QtWidgets.QFormLayout()
-        self._config_widgets["forward_distance_m"] = self._make_double_spin(0.05, 1.0, 0.01)
-        self._config_widgets["graph_roi_forward_m"] = self._make_double_spin(0.5, 8.0, 0.1)
-        self._config_widgets["graph_roi_lateral_half_m"] = self._make_double_spin(0.2, 3.0, 0.05)
-        self._config_widgets["graph_cell_size_m"] = self._make_double_spin(0.01, 0.20, 0.01)
-        self._config_widgets["graph_active_intensity_min"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_active_contrast_min"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_min_cell_points"] = self._make_int_spin(1, 20)
-        self._config_widgets["graph_neighbor_max_distance_m"] = self._make_double_spin(0.05, 1.0, 0.01)
-        self._config_widgets["graph_neighbor_lateral_limit_m"] = self._make_double_spin(0.05, 1.0, 0.01)
-        self._config_widgets["segment_min_length_m"] = self._make_double_spin(0.05, 2.0, 0.01)
-        self._config_widgets["segment_target_length_m"] = self._make_double_spin(0.05, 2.0, 0.01)
-        self._config_widgets["segment_max_length_m"] = self._make_double_spin(0.05, 3.0, 0.01)
-        self._config_widgets["segment_heading_gate_deg"] = self._make_double_spin(1.0, 90.0, 1.0)
-        self._config_widgets["graph_beam_width"] = self._make_int_spin(1, 24)
-        self._config_widgets["graph_beam_horizon_nodes"] = self._make_int_spin(1, 24)
-        self._config_widgets["graph_beam_branching"] = self._make_int_spin(1, 16)
-        self._config_widgets["graph_intensity_weight"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_contrast_weight"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_direction_weight"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_distance_weight"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_history_weight"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_period_weight"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["graph_crosswalk_penalty"] = self._make_double_spin(0.0, 1.0, 0.01)
-        self._config_widgets["use_z_clip"] = QtWidgets.QCheckBox("Enable")
-        self._config_widgets["z_clip_half_range_m"] = self._make_double_spin(0.05, 1.0, 0.01)
-        self._config_widgets["gap_forward_distance_m"] = self._make_double_spin(0.5, 20.0, 0.1)
-        self._config_widgets["continuity_node_count"] = self._make_int_spin(2, 20)
-        self._config_widgets["continuity_strength"] = self._make_double_spin(0.0, 10.0, 0.1)
-        self._config_widgets["crosswalk_stop_enabled"] = QtWidgets.QCheckBox("Enable")
+        self.config_search_edit = QtWidgets.QLineEdit()
+        self.config_search_edit.setPlaceholderText("Search option name or description")
+        body_layout.addWidget(self.config_search_edit)
 
-        form.addRow("Forward Distance (m)", self._config_widgets["forward_distance_m"])
-        form.addRow("Segment ROI Forward (m)", self._config_widgets["graph_roi_forward_m"])
-        form.addRow("Segment ROI Half Width (m)", self._config_widgets["graph_roi_lateral_half_m"])
-        form.addRow("BEV Cell Size (m)", self._config_widgets["graph_cell_size_m"])
-        form.addRow("Active Intensity Min", self._config_widgets["graph_active_intensity_min"])
-        form.addRow("Active Contrast Min", self._config_widgets["graph_active_contrast_min"])
-        form.addRow("Min Cell Points", self._config_widgets["graph_min_cell_points"])
-        form.addRow("Segment Min Length (m)", self._config_widgets["segment_min_length_m"])
-        form.addRow("Segment Target Length (m)", self._config_widgets["segment_target_length_m"])
-        form.addRow("Segment Max Length (m)", self._config_widgets["segment_max_length_m"])
-        form.addRow("Segment Heading Gate (deg)", self._config_widgets["segment_heading_gate_deg"])
-        form.addRow("Segment Max Gap (m)", self._config_widgets["graph_neighbor_max_distance_m"])
-        form.addRow("Segment Lateral Limit (m)", self._config_widgets["graph_neighbor_lateral_limit_m"])
-        form.addRow("Beam Width", self._config_widgets["graph_beam_width"])
-        form.addRow("Beam Horizon Nodes", self._config_widgets["graph_beam_horizon_nodes"])
-        form.addRow("Beam Branching", self._config_widgets["graph_beam_branching"])
-        form.addRow("Intensity Weight", self._config_widgets["graph_intensity_weight"])
-        form.addRow("Contrast Weight", self._config_widgets["graph_contrast_weight"])
-        form.addRow("Direction Weight", self._config_widgets["graph_direction_weight"])
-        form.addRow("Distance Weight", self._config_widgets["graph_distance_weight"])
-        form.addRow("History Weight", self._config_widgets["graph_history_weight"])
-        form.addRow("Period Weight", self._config_widgets["graph_period_weight"])
-        form.addRow("Crosswalk Penalty", self._config_widgets["graph_crosswalk_penalty"])
-        form.addRow("Use Z Clip", self._config_widgets["use_z_clip"])
-        form.addRow("Z Clip Range (+/- m)", self._config_widgets["z_clip_half_range_m"])
-        form.addRow("Gap Distance Limit (m)", self._config_widgets["gap_forward_distance_m"])
-        form.addRow("Continuity Nodes", self._config_widgets["continuity_node_count"])
-        form.addRow("Continuity Strength", self._config_widgets["continuity_strength"])
-        form.addRow("Crosswalk Stop", self._config_widgets["crosswalk_stop_enabled"])
-        body_layout.addLayout(form)
+        self._create_config_widgets()
+        self.config_group_titles = [group_title for group_title, _ in CONFIG_GROUPS]
+        self.config_group_rows = {}
+        self.config_group_list = QtWidgets.QListWidget()
+        self.config_group_list.setMaximumWidth(220)
+        self.config_group_list.setMinimumWidth(180)
+        self.config_group_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.config_group_list.setSpacing(2)
+
+        self.config_pages = QtWidgets.QStackedWidget()
+
+        for group_index, (group_title, items) in enumerate(CONFIG_GROUPS):
+            self.config_group_list.addItem(group_title)
+
+            page_scroll = QtWidgets.QScrollArea()
+            page_scroll.setWidgetResizable(True)
+            page_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+
+            page = QtWidgets.QWidget()
+            page_layout = QtWidgets.QVBoxLayout(page)
+            page_layout.setContentsMargins(8, 8, 8, 8)
+            page_layout.setSpacing(6)
+
+            group_rows: list[tuple[QtWidgets.QWidget, str, str]] = []
+            for key, comment in items:
+                widget = self._config_widgets[key]
+                label = QtWidgets.QLabel(key)
+                label.setToolTip(comment)
+                label.setMinimumWidth(180)
+                widget.setToolTip(comment)
+
+                row = QtWidgets.QWidget()
+                row_layout = QtWidgets.QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(8)
+                row_layout.addWidget(label, 0)
+                row_layout.addWidget(widget, 1)
+                page_layout.addWidget(row)
+                group_rows.append((row, key, comment))
+
+            page_layout.addStretch(1)
+            page_scroll.setWidget(page)
+            self.config_pages.addWidget(page_scroll)
+            self.config_group_rows[group_index] = group_rows
+
+        nav_layout = QtWidgets.QHBoxLayout()
+        nav_layout.addWidget(self.config_group_list, 0)
+        nav_layout.addWidget(self.config_pages, 1)
+        body_layout.addLayout(nav_layout)
+
+        if self.config_group_list.count() > 0:
+            self.config_group_list.setCurrentRow(0)
 
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.btn_reload_cfg)
@@ -207,6 +258,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_reload_cfg.clicked.connect(self.on_reload_config)
         self.btn_apply_cfg.clicked.connect(self.on_apply_config)
         self.btn_save_cfg.clicked.connect(self.on_save_config)
+        self.config_group_list.currentRowChanged.connect(self._on_config_group_changed)
+        self.config_search_edit.textChanged.connect(self._filter_config_options)
 
         self.controller.changed.connect(self.refresh)
         self.controller.log_message.connect(self.log.appendPlainText)
@@ -237,69 +290,39 @@ class MainWindow(QtWidgets.QMainWindow):
         w.setRange(minimum, maximum)
         return w
 
+    def _create_config_widgets(self) -> None:
+        if self._config_widgets:
+            return
+        for key, spec in CONFIG_WIDGET_SPECS.items():
+            kind = spec[0]
+            if kind == "float":
+                _, minimum, maximum, step = spec
+                widget = self._make_double_spin(minimum, maximum, step)
+            elif kind == "int":
+                _, minimum, maximum = spec
+                widget = self._make_int_spin(minimum, maximum)
+            elif kind == "bool":
+                widget = QtWidgets.QCheckBox()
+            else:
+                raise ValueError(f"Unknown config widget kind: {kind}")
+            self._config_widgets[key] = widget
+
     def _config_from_ui(self) -> TrackerConfig:
         cfg = TrackerConfig()
-        cfg.forward_distance_m = self._config_widgets["forward_distance_m"].value()
-        cfg.graph_roi_forward_m = self._config_widgets["graph_roi_forward_m"].value()
-        cfg.graph_roi_lateral_half_m = self._config_widgets["graph_roi_lateral_half_m"].value()
-        cfg.graph_cell_size_m = self._config_widgets["graph_cell_size_m"].value()
-        cfg.graph_active_intensity_min = self._config_widgets["graph_active_intensity_min"].value()
-        cfg.graph_active_contrast_min = self._config_widgets["graph_active_contrast_min"].value()
-        cfg.graph_min_cell_points = self._config_widgets["graph_min_cell_points"].value()
-        cfg.graph_neighbor_max_distance_m = self._config_widgets["graph_neighbor_max_distance_m"].value()
-        cfg.graph_neighbor_lateral_limit_m = self._config_widgets["graph_neighbor_lateral_limit_m"].value()
-        cfg.segment_min_length_m = self._config_widgets["segment_min_length_m"].value()
-        cfg.segment_target_length_m = self._config_widgets["segment_target_length_m"].value()
-        cfg.segment_max_length_m = self._config_widgets["segment_max_length_m"].value()
-        cfg.segment_heading_gate_deg = self._config_widgets["segment_heading_gate_deg"].value()
-        cfg.graph_beam_width = self._config_widgets["graph_beam_width"].value()
-        cfg.graph_beam_horizon_nodes = self._config_widgets["graph_beam_horizon_nodes"].value()
-        cfg.graph_beam_branching = self._config_widgets["graph_beam_branching"].value()
-        cfg.graph_intensity_weight = self._config_widgets["graph_intensity_weight"].value()
-        cfg.graph_contrast_weight = self._config_widgets["graph_contrast_weight"].value()
-        cfg.graph_direction_weight = self._config_widgets["graph_direction_weight"].value()
-        cfg.graph_distance_weight = self._config_widgets["graph_distance_weight"].value()
-        cfg.graph_history_weight = self._config_widgets["graph_history_weight"].value()
-        cfg.graph_period_weight = self._config_widgets["graph_period_weight"].value()
-        cfg.graph_crosswalk_penalty = self._config_widgets["graph_crosswalk_penalty"].value()
-        cfg.use_z_clip = self._config_widgets["use_z_clip"].isChecked()
-        cfg.z_clip_half_range_m = self._config_widgets["z_clip_half_range_m"].value()
-        cfg.gap_forward_distance_m = self._config_widgets["gap_forward_distance_m"].value()
-        cfg.continuity_node_count = self._config_widgets["continuity_node_count"].value()
-        cfg.continuity_strength = self._config_widgets["continuity_strength"].value()
-        cfg.crosswalk_stop_enabled = self._config_widgets["crosswalk_stop_enabled"].isChecked()
+        for key, widget in self._config_widgets.items():
+            if isinstance(widget, QtWidgets.QCheckBox):
+                setattr(cfg, key, widget.isChecked())
+            else:
+                setattr(cfg, key, widget.value())
         return cfg
 
     def _load_config_into_ui(self, cfg: TrackerConfig) -> None:
-        self._config_widgets["forward_distance_m"].setValue(cfg.forward_distance_m)
-        self._config_widgets["graph_roi_forward_m"].setValue(cfg.graph_roi_forward_m)
-        self._config_widgets["graph_roi_lateral_half_m"].setValue(cfg.graph_roi_lateral_half_m)
-        self._config_widgets["graph_cell_size_m"].setValue(cfg.graph_cell_size_m)
-        self._config_widgets["graph_active_intensity_min"].setValue(cfg.graph_active_intensity_min)
-        self._config_widgets["graph_active_contrast_min"].setValue(cfg.graph_active_contrast_min)
-        self._config_widgets["graph_min_cell_points"].setValue(cfg.graph_min_cell_points)
-        self._config_widgets["graph_neighbor_max_distance_m"].setValue(cfg.graph_neighbor_max_distance_m)
-        self._config_widgets["graph_neighbor_lateral_limit_m"].setValue(cfg.graph_neighbor_lateral_limit_m)
-        self._config_widgets["segment_min_length_m"].setValue(cfg.segment_min_length_m)
-        self._config_widgets["segment_target_length_m"].setValue(cfg.segment_target_length_m)
-        self._config_widgets["segment_max_length_m"].setValue(cfg.segment_max_length_m)
-        self._config_widgets["segment_heading_gate_deg"].setValue(cfg.segment_heading_gate_deg)
-        self._config_widgets["graph_beam_width"].setValue(cfg.graph_beam_width)
-        self._config_widgets["graph_beam_horizon_nodes"].setValue(cfg.graph_beam_horizon_nodes)
-        self._config_widgets["graph_beam_branching"].setValue(cfg.graph_beam_branching)
-        self._config_widgets["graph_intensity_weight"].setValue(cfg.graph_intensity_weight)
-        self._config_widgets["graph_contrast_weight"].setValue(cfg.graph_contrast_weight)
-        self._config_widgets["graph_direction_weight"].setValue(cfg.graph_direction_weight)
-        self._config_widgets["graph_distance_weight"].setValue(cfg.graph_distance_weight)
-        self._config_widgets["graph_history_weight"].setValue(cfg.graph_history_weight)
-        self._config_widgets["graph_period_weight"].setValue(cfg.graph_period_weight)
-        self._config_widgets["graph_crosswalk_penalty"].setValue(cfg.graph_crosswalk_penalty)
-        self._config_widgets["use_z_clip"].setChecked(cfg.use_z_clip)
-        self._config_widgets["z_clip_half_range_m"].setValue(cfg.z_clip_half_range_m)
-        self._config_widgets["gap_forward_distance_m"].setValue(cfg.gap_forward_distance_m)
-        self._config_widgets["continuity_node_count"].setValue(cfg.continuity_node_count)
-        self._config_widgets["continuity_strength"].setValue(cfg.continuity_strength)
-        self._config_widgets["crosswalk_stop_enabled"].setChecked(cfg.crosswalk_stop_enabled)
+        for key, widget in self._config_widgets.items():
+            value = getattr(cfg, key)
+            if isinstance(widget, QtWidgets.QCheckBox):
+                widget.setChecked(bool(value))
+            else:
+                widget.setValue(value)
 
     def _set_config_expanded(self, expanded: bool) -> None:
         self._set_config_collapsed(not expanded)
@@ -391,6 +414,40 @@ class MainWindow(QtWidgets.QMainWindow):
             raise ValueError("Need exactly 3 numbers.")
         return [float(x) for x in parts]
 
+    def _on_config_group_changed(self, row: int) -> None:
+        if row < 0:
+            return
+        if hasattr(self, "config_pages"):
+            self.config_pages.setCurrentIndex(row)
+
+    def _filter_config_options(self, text: str) -> None:
+        query = text.strip().lower()
+        visible_groups: list[int] = []
+        for group_index, group_title in enumerate(self.config_group_titles):
+            rows = self.config_group_rows.get(group_index, [])
+            group_match = bool(query) and query in group_title.lower()
+            visible_count = 0
+            for row_widget, key, comment in rows:
+                visible = (
+                    not query
+                    or group_match
+                    or query in key.lower()
+                    or query in comment.lower()
+                )
+                row_widget.setVisible(visible)
+                if visible:
+                    visible_count += 1
+            item = self.config_group_list.item(group_index)
+            if item is not None:
+                item.setHidden(visible_count == 0)
+            if visible_count > 0:
+                visible_groups.append(group_index)
+
+        if visible_groups:
+            current = self.config_group_list.currentRow()
+            if current not in visible_groups:
+                self.config_group_list.setCurrentRow(visible_groups[0])
+
     def _run_action(self, status_text: str, fn) -> bool:
         self.status.setText(status_text)
         QtWidgets.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.WaitCursor))
@@ -468,6 +525,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_track(m.track_points, render=False)
         self.view.set_current(m.current_point, render=False)
         self.view.set_predicted(m.predicted_points, render=False)
+        self.view.set_active_cell_boxes(m.active_cell_box_groups, render=False)
+        self.view.set_segments(m.segment_groups, render=False)
         self.view.set_trajectory_line(m.trajectory_line_points, render=False)
         self.view.set_profile_overlay(m.profile_line_points, m.stripe_segment_points, m.stripe_edge_points, render=False)
         self.view.set_search_box(m.search_box_points, render=False)

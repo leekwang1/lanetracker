@@ -71,6 +71,8 @@ class TrackerController(QtCore.QObject):
         self.model.track_points = None
         self.model.current_point = None
         self.model.predicted_points = None
+        self.model.active_cell_box_groups = None
+        self.model.segment_groups = None
         self.model.trajectory_line_points = None
         self.model.profile_line_points = None
         self.model.stripe_segment_points = None
@@ -163,6 +165,8 @@ class TrackerController(QtCore.QObject):
         self.model.track_points = None
         self.model.current_point = None
         self.model.predicted_points = None
+        self.model.active_cell_box_groups = None
+        self.model.segment_groups = None
         self.model.trajectory_line_points = None
         self.model.profile_line_points = None
         self.model.stripe_segment_points = None
@@ -179,6 +183,8 @@ class TrackerController(QtCore.QObject):
         self.model.current_point = state.center_xyz.copy() if state is not None else None
         self.model.track_points = np.asarray(state.history_centers, dtype=float) if state is not None else None
         self.model.predicted_points = dbg.candidate_points if dbg is not None else None
+        self.model.active_cell_box_groups = dbg.active_cell_box_groups if dbg is not None else None
+        self.model.segment_groups = dbg.segment_groups if dbg is not None else None
         self.model.trajectory_line_points = dbg.trajectory_line_points if dbg is not None else None
         self.model.search_box_points = dbg.search_box_points if dbg is not None else None
         self.model.profile = dbg.profile if dbg is not None else None

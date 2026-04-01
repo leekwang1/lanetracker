@@ -26,7 +26,7 @@ def main() -> None:
             p0=args.p0,
             p1=args.p1,
         )
-        w.resize(1600, 900)
+        w.resize(1600, 1000)
         w.show()
         w.showNormal()
         w.raise_()

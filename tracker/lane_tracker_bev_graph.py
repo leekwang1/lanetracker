@@ -173,6 +173,8 @@ class DebugFrame:
     step_index: int
     source: str
     candidate_points: np.ndarray | None
+    active_cell_box_groups: list[np.ndarray] | None
+    segment_groups: list[np.ndarray] | None
     graph_edge_groups: list[np.ndarray] | None
     chosen_candidate: ObservationCandidate | None
     candidate_count: int
@@ -350,6 +352,8 @@ class BevGraphTracker:
     def _plan_local_graph(self, state: TrackerState) -> tuple[ObservationCandidate | None, DebugFrame]:
         roi = self._build_local_graph(state)
         active_points = roi.get("active_points_xyz")
+        active_cell_boxes = roi.get("active_cell_box_groups")
+        segment_groups = self._segments_to_world_lines(roi["nodes"], float(state.center_xyz[2]))
         edge_groups = self._edges_to_world_lines(roi["nodes"], roi["edges"], float(state.center_xyz[2]))
         search_box = self._build_roi_box(state)
 
@@ -358,6 +362,8 @@ class BevGraphTracker:
                 step_index=self._step_index,
                 source="segment",
                 candidate_points=active_points,
+                active_cell_box_groups=active_cell_boxes,
+                segment_groups=segment_groups,
                 graph_edge_groups=edge_groups,
                 chosen_candidate=None,
                 candidate_count=0,
@@ -376,6 +382,8 @@ class BevGraphTracker:
                 step_index=self._step_index,
                 source="segment",
                 candidate_points=active_points,
+                active_cell_box_groups=active_cell_boxes,
+                segment_groups=segment_groups,
                 graph_edge_groups=edge_groups,
                 chosen_candidate=None,
                 candidate_count=len(roi["nodes"]),
@@ -399,6 +407,8 @@ class BevGraphTracker:
             step_index=self._step_index,
             source="segment",
             candidate_points=active_points,
+            active_cell_box_groups=active_cell_boxes,
+            segment_groups=segment_groups,
             graph_edge_groups=edge_groups,
             chosen_candidate=best_obs,
             candidate_count=len(roi["nodes"]),
@@ -423,7 +433,15 @@ class BevGraphTracker:
         z_ref = self._estimate_z_ref(state.center_xyz[:2], float(state.center_xyz[2]))
         idx = self._filter_z(idx, z_ref)
         if idx.size == 0:
-            return {"nodes": [], "edges": {}, "q50": self._global_q50, "q95": self._global_q95}
+            return {
+                "nodes": [],
+                "edges": {},
+                "q50": self._global_q50,
+                "q95": self._global_q95,
+                "active_points_xyz": None,
+                "active_cell_box_groups": None,
+                "component_scores": {},
+            }
 
         along, lateral = project_points_xy(self.xy[idx], state.center_xyz[:2], tangent)
         mask = (
@@ -432,7 +450,15 @@ class BevGraphTracker:
             & (np.abs(lateral) <= self.cfg.graph_roi_lateral_half_m)
         )
         if not np.any(mask):
-            return {"nodes": [], "edges": {}, "q50": self._global_q50, "q95": self._global_q95}
+            return {
+                "nodes": [],
+                "edges": {},
+                "q50": self._global_q50,
+                "q95": self._global_q95,
+                "active_points_xyz": None,
+                "active_cell_box_groups": None,
+                "component_scores": {},
+            }
 
         idx = idx[mask]
         along = along[mask]
@@ -474,6 +500,8 @@ class BevGraphTracker:
             )
         )
         active_points_list: list[np.ndarray] = []
+        active_cell_box_groups: list[np.ndarray] = []
+        half_cell = float(self.cfg.graph_cell_size_m) * 0.5
         for ia in range(n_along):
             for il in range(n_lat):
                 if not active[ia, il]:
@@ -482,6 +510,18 @@ class BevGraphTracker:
                 lateral_m = (il + 0.5) * self.cfg.graph_cell_size_m - self.cfg.graph_roi_lateral_half_m
                 center_xy = state.center_xyz[:2] + tangent * along_m + normal * lateral_m
                 active_points_list.append(np.array([center_xy[0], center_xy[1], z_ref], dtype=np.float64))
+                corners_xy = np.asarray(
+                    [
+                        center_xy - tangent * half_cell - normal * half_cell,
+                        center_xy + tangent * half_cell - normal * half_cell,
+                        center_xy + tangent * half_cell + normal * half_cell,
+                        center_xy - tangent * half_cell + normal * half_cell,
+                        center_xy - tangent * half_cell - normal * half_cell,
+                    ],
+                    dtype=np.float64,
+                )
+                box_xyz = np.column_stack([corners_xy, np.full(5, z_ref, dtype=np.float64)])
+                active_cell_box_groups.append(box_xyz)
 
         min_length_m = float(getattr(self.cfg, "segment_min_length_m", 0.20))
         target_length_m = float(getattr(self.cfg, "segment_target_length_m", 0.50))
@@ -684,6 +724,7 @@ class BevGraphTracker:
             component_id += 1
 
         active_points_xyz = np.asarray(active_points_list, dtype=np.float64) if active_points_list else None
+        active_boxes = active_cell_box_groups if active_cell_box_groups else None
         return {
             "nodes": nodes,
             "edges": edges,
@@ -691,6 +732,7 @@ class BevGraphTracker:
             "q95": q95,
             "component_scores": component_scores,
             "active_points_xyz": active_points_xyz,
+            "active_cell_box_groups": active_boxes,
         }
 
     def _run_node_beam(
@@ -700,6 +742,13 @@ class BevGraphTracker:
         component_scores: dict[int, float],
     ) -> list[PathHypothesis]:
         nodes_by_id = {n.node_id: n for n in nodes}
+        state_lateral_center = float(self.state.stripe_center_m) if self.state is not None else 0.0
+        start_corridor_half_m = max(
+            self.cfg.graph_neighbor_lateral_limit_m * 1.25,
+            (float(self.state.lane_width_m) if self.state is not None else 0.18) * 0.90,
+            0.16,
+        )
+        branch_lateral_gate_m = max(self.cfg.graph_neighbor_lateral_limit_m * 0.90, 0.14)
         if component_scores:
             ordered_components = sorted(component_scores.items(), key=lambda item: item[1], reverse=True)
             best_comp_score = ordered_components[0][1]
@@ -714,7 +763,7 @@ class BevGraphTracker:
             n
             for n in nodes
             if n.along_m <= max(self.cfg.forward_distance_m * 1.8, self.cfg.graph_cell_size_m * 2.0)
-            and abs(n.lateral_m) <= self.cfg.graph_neighbor_lateral_limit_m * 1.5
+            and abs(n.lateral_m - state_lateral_center) <= start_corridor_half_m
             and (not allowed_components or n.component_id in allowed_components)
         ]
         if not start_nodes:
@@ -757,6 +806,8 @@ class BevGraphTracker:
                 for next_id, dist, angle in candidates:
                     next_node = nodes_by_id[next_id]
                     if allowed_components and next_node.component_id not in allowed_components:
+                        continue
+                    if abs(next_node.lateral_m - hyp.endpoint_lateral_m) > branch_lateral_gate_m:
                         continue
                     edge_score = self._transition_score(last_node, next_node, hyp.last_angle_rad, dist, angle)
                     total = self._node_base_score(next_node) + edge_score + 0.10 * component_scores.get(next_node.component_id, 0.0)
@@ -865,8 +916,6 @@ class BevGraphTracker:
                 break
 
         target_node = min(path_nodes, key=lambda node: float(np.linalg.norm(node.center_xy - center_xy)))
-        center_xy = target_node.center_xy.copy()
-        heading_xy = _normalize(target_node.heading_xy)
         z_ref = self._estimate_z_ref(center_xy, float(state.center_xyz[2]))
         center_xyz = np.array([center_xy[0], center_xy[1], z_ref], dtype=np.float64)
         profile = self._build_twin_edge_profile(center_xy, heading_xy, z_ref, q50, q95)
@@ -892,10 +941,11 @@ class BevGraphTracker:
         continuity_score = float(np.clip(np.mean([n.history_score for n in path_nodes]), 0.0, 1.0))
         intensity_score = float(np.mean([n.intensity_score for n in path_nodes]))
         contrast_score = float(np.mean([n.contrast_score for n in path_nodes]))
-        crosswalk_score = self._detect_crosswalk(target_node.center_xy, heading_xy, z_ref, q50, q95)
+        crosswalk_score = self._detect_crosswalk(center_xy, heading_xy, z_ref, q50, q95)
         avg_raw = beam.cumulative_score / max(len(path_nodes), 1)
         path_score = float(np.clip(avg_raw, 0.0, 1.0))
-        center_penalty = math.exp(-abs(target_node.lateral_m - state.stripe_center_m) / max(state.lane_width_m * 0.65, 0.12))
+        _, center_lateral = project_points_xy(center_xy[None, :], state.center_xyz[:2], state.tangent_xy)
+        center_penalty = math.exp(-abs(float(center_lateral[0]) - state.stripe_center_m) / max(state.lane_width_m * 0.65, 0.12))
         total_score = float(
             np.clip(
                 0.72 * path_score
@@ -1206,6 +1256,20 @@ class BevGraphTracker:
                 dst_z = self._estimate_z_ref(dst.center_xy, fallback_z)
                 dst_pt = np.array([dst.center_xy[0], dst.center_xy[1], dst_z], dtype=np.float64)
                 lines.append(np.vstack([src_pt, dst_pt]))
+        return lines if lines else None
+
+    def _segments_to_world_lines(self, nodes: list[GraphNode], fallback_z: float) -> list[np.ndarray] | None:
+        if not nodes:
+            return None
+        lines: list[np.ndarray] = []
+        for node in nodes:
+            half_len = max(float(node.length_m) * 0.5, float(self.cfg.graph_cell_size_m) * 0.5)
+            start_xy = node.center_xy - node.heading_xy * half_len
+            end_xy = node.center_xy + node.heading_xy * half_len
+            z_ref = self._estimate_z_ref(node.center_xy, fallback_z)
+            start_pt = np.array([start_xy[0], start_xy[1], z_ref], dtype=np.float64)
+            end_pt = np.array([end_xy[0], end_xy[1], z_ref], dtype=np.float64)
+            lines.append(np.vstack([start_pt, end_pt]))
         return lines if lines else None
 
     def _build_roi_box(self, state: TrackerState) -> np.ndarray:
