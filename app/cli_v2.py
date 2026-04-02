@@ -9,7 +9,7 @@ from ..io.csv_io import save_xyz_csv
 from ..io.debug_io import save_debug_json
 from ..io.las_io import load_las_xyz_intensity
 from ..tracker.config import DEFAULT_CONFIG_PATH, load_tracker_config
-from ..tracker.lane_tracker_fan import FanSearchTracker
+from ..tracker.lane_tracker_bev_graph import BevGraphTracker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,7 +27,7 @@ def main() -> None:
     args = build_parser().parse_args()
     las = load_las_xyz_intensity(args.las)
     cfg = load_tracker_config(args.config)
-    tracker = FanSearchTracker(las.xyz, las.intensity, cfg)
+    tracker = BevGraphTracker(las.xyz, las.intensity, cfg)
     p0 = np.asarray(args.p0, dtype=float)
     p1 = np.asarray(args.p1, dtype=float)
     tracker.initialize(p0, p1)

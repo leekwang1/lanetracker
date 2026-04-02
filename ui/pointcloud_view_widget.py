@@ -527,9 +527,9 @@ class PointCloudViewWidget(QtWidgets.QWidget):
                 self._candidate_circle_poly = poly
                 self._candidate_circle_actor = self.plotter.add_mesh(
                     poly,
-                    color="#f59e0b",
-                    line_width=1.2,
-                    opacity=0.55,
+                    color="#fde047",
+                    line_width=2.4,
+                    opacity=0.92,
                     render_lines_as_tubes=False,
                     reset_camera=False,
                 )

@@ -9,112 +9,119 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "tracker.
 
 CONFIG_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     (
-        "1. Basic Tracking",
+        "1. 기본 추적",
         [
-            ("forward_distance_m", "Distance moved per tracking step in meters"),
-            ("max_track_length_m", "Maximum total tracking distance for run_full in meters"),
+            ("forward_distance_m", "트래킹 한 스텝에서 전진하는 거리(m)"),
+            ("max_track_length_m", "run_full 실행 시 허용되는 최대 누적 추적 거리(m)"),
         ],
     ),
     (
-        "2. Local ROI And BEV Cells",
+        "2. 로컬 ROI 및 활성 셀",
         [
-            ("graph_roi_forward_m", "Forward ROI length in meters"),
-            ("graph_roi_lateral_half_m", "Half ROI width to left and right in meters"),
-            ("graph_cell_size_m", "BEV cell size in meters; smaller is finer but slower"),
-            ("graph_active_intensity_min", "Minimum normalized intensity for active cells"),
-            ("graph_active_contrast_min", "Minimum local contrast for active cells"),
-            ("graph_min_cell_points", "Minimum number of points required in a cell"),
+            ("graph_roi_forward_m", "전방 ROI 길이(m)"),
+            ("graph_roi_lateral_half_m", "좌우 ROI 반폭(m)"),
+            ("graph_cell_size_m", "BEV 셀 크기(m). 작을수록 더 촘촘하지만 느려짐"),
+            ("graph_active_intensity_min", "활성 셀로 인정할 최소 정규화 intensity"),
+            ("graph_active_contrast_min", "활성 셀로 인정할 최소 로컬 contrast"),
+            ("graph_min_cell_points", "셀 하나를 유효하게 볼 최소 포인트 수"),
         ],
     ),
     (
-        "3. Segment Extraction",
+        "3. 활성 셀 노이즈 제거",
         [
-            ("segment_min_length_m", "Minimum valid segment length in meters"),
-            ("segment_target_length_m", "Target segment length when splitting components"),
-            ("segment_max_length_m", "Maximum segment length in meters"),
-            ("segment_heading_gate_deg", "Allowed segment heading difference in degrees"),
+            ("graph_noise_min_neighbors", "고립 셀을 유지하기 위해 필요한 최소 활성 이웃 수"),
+            ("graph_noise_min_component_cells", "노이즈 제거 후 유지할 최소 연결 활성 셀 개수"),
         ],
     ),
     (
-        "4. Graph Connection",
+        "4. 차선 박스",
         [
-            ("graph_neighbor_max_distance_m", "Maximum distance to connect neighbor nodes"),
-            ("graph_neighbor_lateral_limit_m", "Maximum lateral difference when linking neighbors"),
+            ("lane_box_length_m", "검출할 차선 박스의 종방향 길이(m)"),
+            ("lane_box_width_m", "검출할 차선 박스의 횡방향 폭(m)"),
+            ("lane_box_min_active_cells", "차선 박스 1개를 만들기 위한 최소 활성 셀 수"),
         ],
     ),
     (
-        "5. Beam Search",
+        "5. 안테나 엣지",
         [
-            ("graph_beam_width", "Number of path hypotheses kept per step"),
-            ("graph_beam_horizon_nodes", "How many nodes ahead to plan"),
-            ("graph_beam_branching", "Maximum branch count expanded from each node"),
+            ("antenna_length_m", "차선 박스를 연결할 때 쓰는 전방 안테나 corridor 길이(m)"),
+            ("antenna_half_width_m", "다음 차선 박스를 허용할 안테나 corridor 반폭(m)"),
+            ("antenna_heading_tolerance_deg", "차선 박스 연결 시 허용할 최대 진행방향 차이(도)"),
         ],
     ),
     (
-        "6. Score Weights",
+        "6. 빔 탐색",
         [
-            ("graph_intensity_weight", "Weight for strong intensity"),
-            ("graph_contrast_weight", "Weight for local contrast"),
-            ("graph_direction_weight", "Weight for direction and curvature continuity"),
-            ("graph_distance_weight", "Weight against large distance jumps"),
-            ("graph_history_weight", "Weight for consistency with recent history"),
-            ("graph_period_weight", "Weight for dashed-period consistency"),
-            ("graph_crosswalk_penalty", "Penalty for crosswalk-like patterns"),
+            ("graph_beam_width", "스텝마다 유지할 경로 가설 수"),
+            ("graph_beam_horizon_nodes", "앞으로 탐색할 노드 깊이"),
+            ("graph_beam_branching", "노드 하나에서 확장할 최대 분기 수"),
         ],
     ),
     (
-        "7. Profile And Stripe Geometry",
+        "7. 점수 가중치",
         [
-            ("profile_lateral_half_m", "Half lateral width used for cross-section profiles"),
-            ("profile_along_half_m", "Half along-track window used for profiles"),
-            ("profile_bin_size_m", "Profile lateral bin size in meters"),
-            ("twin_edge_min_width_m", "Minimum stripe width for twin-edge candidates"),
-            ("twin_edge_max_width_m", "Maximum stripe width for twin-edge candidates"),
-            ("edge_grad_min", "Minimum gradient used to detect twin edges"),
-            ("candidate_min_support", "Minimum support points for a profile candidate"),
-            ("candidate_min_score", "Minimum total score required to accept a candidate"),
+            ("graph_intensity_weight", "강한 intensity에 줄 가중치"),
+            ("graph_contrast_weight", "로컬 contrast에 줄 가중치"),
+            ("graph_direction_weight", "진행방향 및 곡률 연속성에 줄 가중치"),
+            ("graph_distance_weight", "과도한 거리 점프를 억제하는 가중치"),
+            ("graph_history_weight", "최근 추적 이력과의 일관성 가중치"),
+            ("graph_period_weight", "점선 주기 일관성 가중치"),
+            ("graph_crosswalk_penalty", "횡단보도처럼 보이는 패턴에 대한 패널티"),
         ],
     ),
     (
-        "8. Along Signal And Dashed Pattern",
+        "8. 프로파일 및 차선 형상",
         [
-            ("along_signal_half_m", "Half length used for 1D along-track signal"),
-            ("along_signal_bin_m", "Bin size for along-track signal"),
-            ("along_signal_lateral_half_m", "Half lateral width used to gather along-track signal"),
-            ("autocorr_min_period_m", "Minimum dashed period considered valid"),
-            ("autocorr_max_period_m", "Maximum dashed period considered valid"),
-            ("dashed_autocorr_min", "Minimum autocorrelation score for dashed classification"),
-            ("solid_occupancy_min", "Minimum occupancy used for solid classification"),
+            ("profile_lateral_half_m", "단면 프로파일에 사용할 좌우 반폭(m)"),
+            ("profile_along_half_m", "프로파일 계산에 사용할 종방향 반길이(m)"),
+            ("profile_bin_size_m", "프로파일의 좌우 bin 크기(m)"),
+            ("twin_edge_min_width_m", "쌍 에지 후보로 인정할 최소 차선 폭(m)"),
+            ("twin_edge_max_width_m", "쌍 에지 후보로 인정할 최대 차선 폭(m)"),
+            ("edge_grad_min", "쌍 에지를 검출할 최소 gradient"),
+            ("candidate_min_support", "프로파일 후보를 인정할 최소 지지 포인트 수"),
+            ("candidate_min_score", "후보를 채택할 최소 총점"),
         ],
     ),
     (
-        "9. Gap And Continuity",
+        "9. 종방향 신호 및 점선 패턴",
         [
-            ("gap_forward_distance_m", "Maximum distance bridged without valid observations"),
-            ("continuity_node_count", "How many recent nodes are used for continuity"),
-            ("continuity_strength", "Strength of continuity penalties"),
+            ("along_signal_half_m", "1D 종방향 신호를 만들 때 사용할 반길이(m)"),
+            ("along_signal_bin_m", "종방향 신호 bin 크기(m)"),
+            ("along_signal_lateral_half_m", "종방향 신호를 수집할 좌우 반폭(m)"),
+            ("autocorr_min_period_m", "유효한 점선 주기로 볼 최소 거리(m)"),
+            ("autocorr_max_period_m", "유효한 점선 주기로 볼 최대 거리(m)"),
+            ("dashed_autocorr_min", "점선으로 분류할 최소 자기상관 점수"),
+            ("solid_occupancy_min", "실선으로 분류할 최소 점유율"),
         ],
     ),
     (
-        "10. Z Filtering",
+        "10. 끊김 보정 및 연속성",
         [
-            ("use_z_clip", "If true, use only points near the current lane height"),
-            ("z_clip_half_range_m", "Half Z range used when clipping points, in meters"),
+            ("gap_forward_distance_m", "유효 관측 없이 보정 이동할 최대 거리(m)"),
+            ("continuity_node_count", "연속성 계산에 사용할 최근 노드 수"),
+            ("continuity_strength", "연속성 패널티 강도"),
         ],
     ),
     (
-        "11. Crosswalk Handling",
+        "11. Z 필터링",
         [
-            ("crosswalk_stop_enabled", "If true, stop when crosswalk pattern is detected"),
-            ("crosswalk_lookahead_m", "Forward distance used for crosswalk checks"),
-            ("crosswalk_lateral_half_m", "Half lateral width used for crosswalk checks"),
-            ("crosswalk_min_peaks", "Minimum repeated peaks to classify a crosswalk"),
+            ("use_z_clip", "true이면 현재 차선 높이 근처 포인트만 사용"),
+            ("z_clip_half_range_m", "포인트 Z 클리핑에 사용할 반범위(m)"),
         ],
     ),
     (
-        "12. Internal Grid",
+        "12. 횡단보도 처리",
         [
-            ("spatial_grid_cell_size_m", "Internal spatial-grid cell size for neighbor queries"),
+            ("crosswalk_stop_enabled", "true이면 횡단보도 패턴 검출 시 정지"),
+            ("crosswalk_lookahead_m", "횡단보도 검사용 전방 거리(m)"),
+            ("crosswalk_lateral_half_m", "횡단보도 검사용 좌우 반폭(m)"),
+            ("crosswalk_min_peaks", "횡단보도로 분류할 최소 반복 피크 수"),
+        ],
+    ),
+    (
+        "13. 내부 그리드",
+        [
+            ("spatial_grid_cell_size_m", "이웃 질의에 사용할 내부 spatial-grid 셀 크기(m)"),
         ],
     ),
 ]
@@ -129,6 +136,14 @@ class TrackerConfig:
     graph_active_intensity_min: float = 0.62
     graph_active_contrast_min: float = 0.10
     graph_min_cell_points: int = 2
+    graph_noise_min_neighbors: int = 2
+    graph_noise_min_component_cells: int = 3
+    lane_box_length_m: float = 0.15
+    lane_box_width_m: float = 0.15
+    lane_box_min_active_cells: int = 2
+    antenna_length_m: float = 2.0
+    antenna_half_width_m: float = 0.30
+    antenna_heading_tolerance_deg: float = 24.0
     graph_neighbor_max_distance_m: float = 0.18
     graph_neighbor_lateral_limit_m: float = 0.18
     segment_min_length_m: float = 0.20
@@ -193,6 +208,13 @@ def tracker_config_to_dict(cfg: TrackerConfig) -> dict[str, Any]:
 def tracker_config_from_dict(data: dict[str, Any] | None) -> TrackerConfig:
     if not data:
         return TrackerConfig()
+
+    data = dict(data)
+    legacy_box_size = data.pop("lane_box_size_m", None)
+    if legacy_box_size is not None:
+        data.setdefault("lane_box_length_m", legacy_box_size)
+        data.setdefault("lane_box_width_m", legacy_box_size)
+
     cfg = TrackerConfig()
     for field_name in asdict(cfg).keys():
         if field_name in data:
@@ -254,7 +276,7 @@ def _dump_simple_yaml(data: dict[str, Any]) -> str:
         lines.append("")
 
     if remaining:
-        lines.append("# [Etc]")
+        lines.append("# [기타]")
         for key, value in remaining.items():
             lines.append(f"{key}: {render(value)}")
     return "\n".join(lines) + "\n"

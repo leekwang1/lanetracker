@@ -113,12 +113,12 @@ class TrackerController(QtCore.QObject):
         self._update_model_from_tracker(self.tracker.get_current_state(), self.tracker.get_last_debug_frame())
         self.model.status_text = f"Initialized | mode={self.tracker.get_current_state().mode.value}"
         self.log_message.emit(
-            "Tracker initialized" + (" | reused segment tracker" if reuse_tracker else "")
+            "Tracker initialized" + (" | reused tracker" if reuse_tracker else "")
         )
         if self.tracker._init_summary:
             s = self.tracker._init_summary
             self.log_message.emit(
-                "SEGMENT_INIT | "
+                "TRACK_INIT | "
                 f"reason={s.get('reason', 'na')} | "
                 f"cand={s.get('candidate_count', 'na')} | "
                 f"best={s.get('best_score', 'na')} | "
