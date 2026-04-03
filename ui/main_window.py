@@ -13,61 +13,24 @@ from .profile_plot_widget import ProfilePlotWidget
 CONFIG_WIDGET_SPECS: dict[str, tuple] = {
     "forward_distance_m": ("float", 0.05, 1.0, 0.01),
     "max_track_length_m": ("float", 1.0, 500.0, 1.0),
-    "graph_roi_forward_m": ("float", 0.5, 8.0, 0.1),
-    "graph_roi_lateral_half_m": ("float", 0.2, 3.0, 0.05),
-    "graph_cell_size_m": ("float", 0.01, 0.20, 0.01),
-    "graph_active_intensity_min": ("float", 0.0, 1.0, 0.01),
-    "graph_active_contrast_min": ("float", 0.0, 1.0, 0.01),
-    "graph_min_cell_points": ("int", 1, 20),
-    "graph_noise_min_neighbors": ("int", 0, 8),
-    "graph_noise_min_component_cells": ("int", 1, 100),
-    "lane_box_length_m": ("float", 0.05, 2.0, 0.01),
-    "lane_box_width_m": ("float", 0.05, 2.0, 0.01),
-    "lane_box_min_active_cells": ("int", 1, 25),
-    "antenna_length_m": ("float", 0.2, 10.0, 0.1),
-    "antenna_half_width_m": ("float", 0.05, 2.0, 0.01),
-    "antenna_heading_tolerance_deg": ("float", 1.0, 90.0, 1.0),
-    "segment_min_length_m": ("float", 0.05, 2.0, 0.01),
-    "segment_target_length_m": ("float", 0.05, 2.0, 0.01),
-    "segment_max_length_m": ("float", 0.05, 3.0, 0.01),
-    "segment_heading_gate_deg": ("float", 1.0, 90.0, 1.0),
-    "graph_neighbor_max_distance_m": ("float", 0.05, 1.0, 0.01),
-    "graph_neighbor_lateral_limit_m": ("float", 0.05, 1.0, 0.01),
-    "graph_beam_width": ("int", 1, 24),
-    "graph_beam_horizon_nodes": ("int", 1, 24),
-    "graph_beam_branching": ("int", 1, 16),
-    "graph_intensity_weight": ("float", 0.0, 1.0, 0.01),
-    "graph_contrast_weight": ("float", 0.0, 1.0, 0.01),
-    "graph_direction_weight": ("float", 0.0, 1.0, 0.01),
-    "graph_distance_weight": ("float", 0.0, 1.0, 0.01),
-    "graph_history_weight": ("float", 0.0, 1.0, 0.01),
-    "graph_period_weight": ("float", 0.0, 1.0, 0.01),
-    "graph_crosswalk_penalty": ("float", 0.0, 1.0, 0.01),
-    "profile_lateral_half_m": ("float", 0.05, 2.0, 0.01),
-    "profile_along_half_m": ("float", 0.01, 1.0, 0.01),
-    "profile_bin_size_m": ("float", 0.001, 0.10, 0.001),
-    "twin_edge_min_width_m": ("float", 0.01, 1.0, 0.01),
-    "twin_edge_max_width_m": ("float", 0.01, 1.0, 0.01),
-    "edge_grad_min": ("float", 0.0, 2.0, 0.01),
-    "candidate_min_support": ("int", 1, 100),
+    "max_gap_distance_m": ("float", 0.1, 20.0, 0.1),
+    "roi_forward_m": ("float", 0.5, 8.0, 0.1),
+    "roi_backward_m": ("float", 0.0, 2.0, 0.05),
+    "roi_lateral_half_m": ("float", 0.2, 3.0, 0.05),
+    "corridor_half_width_m": ("float", 0.05, 1.0, 0.01),
+    "grid_cell_size_m": ("float", 0.01, 0.20, 0.01),
+    "active_intensity_min": ("float", 0.0, 1.0, 0.01),
+    "min_points_per_cell": ("int", 1, 20),
+    "component_min_cells": ("int", 1, 100),
+    "component_min_span_m": ("float", 0.05, 3.0, 0.01),
+    "stripe_width_m": ("float", 0.03, 1.0, 0.01),
+    "candidate_lateral_sigma_m": ("float", 0.01, 0.50, 0.01),
+    "candidate_heading_sigma_deg": ("float", 1.0, 45.0, 1.0),
     "candidate_min_score": ("float", 0.0, 1.0, 0.01),
-    "along_signal_half_m": ("float", 0.1, 5.0, 0.05),
-    "along_signal_bin_m": ("float", 0.005, 0.20, 0.005),
-    "along_signal_lateral_half_m": ("float", 0.01, 1.0, 0.01),
-    "autocorr_min_period_m": ("float", 0.05, 5.0, 0.05),
-    "autocorr_max_period_m": ("float", 0.05, 5.0, 0.05),
-    "dashed_autocorr_min": ("float", 0.0, 1.0, 0.01),
-    "solid_occupancy_min": ("float", 0.0, 1.0, 0.01),
-    "gap_forward_distance_m": ("float", 0.5, 20.0, 0.1),
-    "continuity_node_count": ("int", 2, 20),
-    "continuity_strength": ("float", 0.0, 10.0, 0.1),
+    "heading_smoothing_alpha": ("float", 0.0, 1.0, 0.01),
+    "max_heading_change_deg": ("float", 0.1, 45.0, 0.1),
     "use_z_clip": ("bool",),
     "z_clip_half_range_m": ("float", 0.05, 1.0, 0.01),
-    "crosswalk_stop_enabled": ("bool",),
-    "crosswalk_lookahead_m": ("float", 0.1, 10.0, 0.1),
-    "crosswalk_lateral_half_m": ("float", 0.1, 5.0, 0.1),
-    "crosswalk_min_peaks": ("int", 1, 20),
-    "spatial_grid_cell_size_m": ("float", 0.01, 1.0, 0.01),
 }
 
 
@@ -79,7 +42,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p1: list[float] | tuple[float, ...] | None = None,
     ):
         super().__init__()
-        self.setWindowTitle("Lane Tracker V2")
+        self.setWindowTitle("차선 추적기 V2")
         self.controller = TrackerController()
         self.view = PointCloudViewWidget()
         self.profile = ProfilePlotWidget()
@@ -87,18 +50,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.setReadOnly(True)
 
         self.las_edit = QtWidgets.QLineEdit()
-        self.las_edit.setPlaceholderText("Select a .las file")
+        self.las_edit.setPlaceholderText(".las 파일을 선택하세요")
         self.p0_edit = QtWidgets.QLineEdit("0 0 0")
         self.p1_edit = QtWidgets.QLineEdit("1 0 0")
         self.config_path_edit = QtWidgets.QLineEdit(str(self.controller.config_path))
-        self.status = QtWidgets.QLabel("Ready")
-        self.view_log_check = QtWidgets.QCheckBox("View Log")
+        self.status = QtWidgets.QLabel("준비됨")
+        self.view_log_check = QtWidgets.QCheckBox("뷰 로그 보기")
         self.view_log_check.setChecked(False)
         self._config_collapsed = True
 
         self._config_widgets: dict[str, QtWidgets.QWidget] = {}
         self._config_group_titles: list[str] = []
-        self._config_group_rows: dict[int, list[tuple[QtWidgets.QWidget, str, str]]] = {}
+        self._config_group_rows: dict[int, list[tuple[QtWidgets.QWidget, str, str, str]]] = {}
         
         central = QtWidgets.QSplitter()
         central.addWidget(self.view)
@@ -138,24 +101,24 @@ class MainWindow(QtWidgets.QMainWindow):
         return panel
 
     def _build_data_group(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Inputs")
+        group = QtWidgets.QGroupBox("입력")
         form = QtWidgets.QFormLayout(group)
 
-        btn_browse_las = QtWidgets.QPushButton("Browse...")
+        btn_browse_las = QtWidgets.QPushButton("찾아보기...")
         las_row = QtWidgets.QHBoxLayout()
         las_row.addWidget(self.las_edit)
         las_row.addWidget(btn_browse_las)
-        form.addRow("LAS", las_row)
+        form.addRow("LAS 파일", las_row)
         form.addRow("P0", self.p0_edit)
         form.addRow("P1", self.p1_edit)
 
         btn_row = QtWidgets.QHBoxLayout()
-        self.btn_load = QtWidgets.QPushButton("Load LAS")
-        self.btn_init = QtWidgets.QPushButton("Initialize")
-        self.btn_back = QtWidgets.QPushButton("Back One Step")
-        self.btn_step = QtWidgets.QPushButton("Run One Step")
-        self.btn_full = QtWidgets.QPushButton("Run Full")
-        self.btn_reset = QtWidgets.QPushButton("Reset")
+        self.btn_load = QtWidgets.QPushButton("LAS 불러오기")
+        self.btn_init = QtWidgets.QPushButton("초기화")
+        self.btn_back = QtWidgets.QPushButton("한 스텝 뒤로")
+        self.btn_step = QtWidgets.QPushButton("한 스텝 실행")
+        self.btn_full = QtWidgets.QPushButton("전체 실행")
+        self.btn_reset = QtWidgets.QPushButton("리셋")
         for btn in [self.btn_load, self.btn_init, self.btn_back, self.btn_step, self.btn_full, self.btn_reset]:
             btn_row.addWidget(btn)
         form.addRow(btn_row)
@@ -164,12 +127,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return group
 
     def _build_config_group(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("YAML Config")
+        group = QtWidgets.QGroupBox("설정")
         outer = QtWidgets.QVBoxLayout(group)
         outer.setContentsMargins(8, 8, 8, 8)
 
         self.btn_toggle_cfg = QtWidgets.QToolButton()
-        self.btn_toggle_cfg.setText("YAML Config")
+        self.btn_toggle_cfg.setText("YAML 설정")
         self.btn_toggle_cfg.setCheckable(True)
         self.btn_toggle_cfg.setChecked(False)
         self.btn_toggle_cfg.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
@@ -183,16 +146,16 @@ class MainWindow(QtWidgets.QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
 
         path_row = QtWidgets.QHBoxLayout()
-        self.btn_browse_cfg = QtWidgets.QPushButton("Browse...")
-        self.btn_reload_cfg = QtWidgets.QPushButton("Reload")
-        self.btn_apply_cfg = QtWidgets.QPushButton("Apply")
-        self.btn_save_cfg = QtWidgets.QPushButton("Save")
+        self.btn_browse_cfg = QtWidgets.QPushButton("찾아보기...")
+        self.btn_reload_cfg = QtWidgets.QPushButton("다시 불러오기")
+        self.btn_apply_cfg = QtWidgets.QPushButton("적용")
+        self.btn_save_cfg = QtWidgets.QPushButton("저장")
         path_row.addWidget(self.config_path_edit)
         path_row.addWidget(self.btn_browse_cfg)
         body_layout.addLayout(path_row)
 
         self.config_search_edit = QtWidgets.QLineEdit()
-        self.config_search_edit.setPlaceholderText("Search option name or description")
+        self.config_search_edit.setPlaceholderText("설정 이름 또는 설명 검색")
         body_layout.addWidget(self.config_search_edit)
 
         self._create_config_widgets()
@@ -218,10 +181,10 @@ class MainWindow(QtWidgets.QMainWindow):
             page_layout.setContentsMargins(8, 8, 8, 8)
             page_layout.setSpacing(6)
 
-            group_rows: list[tuple[QtWidgets.QWidget, str, str]] = []
-            for key, comment in items:
+            group_rows: list[tuple[QtWidgets.QWidget, str, str, str]] = []
+            for key, label_text, comment in items:
                 widget = self._config_widgets[key]
-                label = QtWidgets.QLabel(key)
+                label = QtWidgets.QLabel(label_text)
                 label.setToolTip(comment)
                 label.setMinimumWidth(180)
                 widget.setToolTip(comment)
@@ -233,7 +196,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 row_layout.addWidget(label, 0)
                 row_layout.addWidget(widget, 1)
                 page_layout.addWidget(row)
-                group_rows.append((row, key, comment))
+                group_rows.append((row, key, label_text, comment))
 
             page_layout.addStretch(1)
             page_scroll.setWidget(page)
@@ -361,43 +324,43 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_browse_las(self) -> None:
         start_dir = str((Path(self.las_edit.text()).parent if self.las_edit.text().strip() else Path(__file__).resolve().parents[1] / "data"))
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select LAS", start_dir, "LAS Files (*.las);;All Files (*)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "LAS 파일 선택", start_dir, "LAS Files (*.las);;All Files (*)")
         if path:
             self.las_edit.setText(path)
 
     def on_browse_config(self) -> None:
         start_path = self.config_path_edit.text().strip() or str(DEFAULT_CONFIG_PATH)
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Select YAML Config", start_path, "YAML Files (*.yaml *.yml)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "YAML 설정 파일 선택", start_path, "YAML Files (*.yaml *.yml)")
         if path:
             self.config_path_edit.setText(path)
 
     def on_load(self) -> None:
         path = self.las_edit.text().strip()
         if not path:
-            self._show_error("LAS path is empty.")
+            self._show_error("LAS 경로가 비어 있습니다.")
             return
         if not Path(path).exists():
-            self._show_error(f"LAS file not found:\n{path}")
+            self._show_error(f"LAS 파일을 찾을 수 없습니다.\n{path}")
             return
-        self._run_action("Loading LAS...", lambda: self.controller.load_las(path))
+        self._run_action("LAS 불러오는 중...", lambda: self.controller.load_las(path))
 
     def on_init(self) -> None:
         try:
             p0 = self._parse_xyz_text(self.p0_edit.text())
             p1 = self._parse_xyz_text(self.p1_edit.text())
         except ValueError as exc:
-            self._show_error(f"Invalid P0/P1 format.\nUse: x y z\n\n{exc}")
+            self._show_error(f"P0/P1 형식이 올바르지 않습니다.\n형식: x y z\n\n{exc}")
             return
         self.log.clear()
-        if self._run_action("Initializing tracker...", lambda: self._initialize_with_points(p0, p1)):
+        if self._run_action("추적기 초기화 중...", lambda: self._initialize_with_points(p0, p1)):
             self.view.focus_on_point(self.controller.model.current_point)
 
     def on_step(self) -> None:
-        if self._run_action("Running one step...", self.controller.run_step):
+        if self._run_action("한 스텝 실행 중...", self.controller.run_step):
             self.view.focus_on_point(self.controller.model.current_point)
 
     def on_back(self) -> None:
-        if self._run_action("Restoring previous step...", self.controller.undo_step):
+        if self._run_action("이전 스텝 복원 중...", self.controller.undo_step):
             self.view.focus_on_point(self.controller.model.current_point)
 
     def _on_space_step(self) -> None:
@@ -431,7 +394,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def on_full(self) -> None:
-        self._run_action("Running full tracker...", self.controller.run_full)
+        self._run_action("전체 추적 실행 중...", self.controller.run_full)
 
     def on_reset(self) -> None:
         self.log.clear()
@@ -439,19 +402,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_reload_config(self) -> None:
         path = self.config_path_edit.text().strip() or str(DEFAULT_CONFIG_PATH)
-        if self._run_action("Reloading config...", lambda: self._reload_config(path)):
-            self.status.setText("Config reloaded")
+        if self._run_action("설정 다시 불러오는 중...", lambda: self._reload_config(path)):
+            self.status.setText("설정을 다시 불러왔습니다")
 
     def on_apply_config(self) -> None:
         cfg = self._config_from_ui()
         self.controller.apply_config(cfg)
-        self.status.setText("Config applied")
+        self.status.setText("설정을 적용했습니다")
 
     def on_save_config(self) -> None:
         cfg = self._config_from_ui()
         path = self.config_path_edit.text().strip() or str(DEFAULT_CONFIG_PATH)
-        if self._run_action("Saving config...", lambda: self.controller.save_config(cfg, path)):
-            self.status.setText("Config saved")
+        if self._run_action("설정 저장 중...", lambda: self.controller.save_config(cfg, path)):
+            self.status.setText("설정을 저장했습니다")
 
     def _reload_config(self, path: str) -> None:
         cfg = self.controller.load_config(path)
@@ -467,7 +430,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _parse_xyz_text(self, text: str) -> list[float]:
         parts = text.replace(",", " ").split()
         if len(parts) != 3:
-            raise ValueError("Need exactly 3 numbers.")
+            raise ValueError("숫자 3개가 필요합니다.")
         return [float(x) for x in parts]
 
     def _on_config_group_changed(self, row: int) -> None:
@@ -483,11 +446,12 @@ class MainWindow(QtWidgets.QMainWindow):
             rows = self.config_group_rows.get(group_index, [])
             group_match = bool(query) and query in group_title.lower()
             visible_count = 0
-            for row_widget, key, comment in rows:
+            for row_widget, key, label_text, comment in rows:
                 visible = (
                     not query
                     or group_match
                     or query in key.lower()
+                    or query in label_text.lower()
                     or query in comment.lower()
                 )
                 row_widget.setVisible(visible)
@@ -557,7 +521,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_seed_point(self.p1_edit, point_xyz, "P1")
         elif chosen == act_copy_xyz and point_xyz is not None:
             QtWidgets.QApplication.clipboard().setText(" ".join(f"{float(v):.10f}" for v in point_xyz))
-            self.status.setText("Copied point XYZ")
+            self.status.setText("점 좌표를 복사했습니다")
         elif chosen == act_init:
             self.on_init()
         elif chosen == act_reset_view:
@@ -570,7 +534,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.controller.set_p0(*vals)
         elif label == "P1":
             self.controller.set_p1(*vals)
-        self.status.setText(f"{label} updated from point cloud")
+        self.status.setText(f"{label}를 포인트클라우드에서 가져왔습니다")
         self.log.appendPlainText(f"{label} <- {vals[0]:.6f}, {vals[1]:.6f}, {vals[2]:.6f}")
 
     def refresh(self) -> None:
@@ -586,7 +550,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_trajectory_line(m.trajectory_line_points, render=False)
         self.view.set_profile_overlay(m.profile_line_points, m.stripe_segment_points, m.stripe_edge_points, render=False)
         self.view.set_search_box(m.search_box_points, render=False)
-        self.view.set_candidate_circles(m.candidate_circle_groups, m.selected_circle_points, render=False)
         self.view.render()
         self.profile.update_profile(m.profile)
-        self.status.setText(m.status_text or "Ready")
+        self.status.setText(m.status_text or "준비됨")

@@ -1,135 +1,51 @@
-# [1. 기본 추적]
-# 트래킹 한 스텝에서 전진하는 거리(m)
+# [1. 추적]
+# 한 스텝마다 앞으로 전진하는 거리
 forward_distance_m: 0.3
-# run_full 실행 시 허용되는 최대 누적 추적 거리(m)
+# 전체 실행에서 허용할 최대 추적 거리
 max_track_length_m: 120.0
+# 관측이 끊겨도 버틸 최대 갭 거리
+max_gap_distance_m: 2.4
 
-# [2. 로컬 ROI 및 활성 셀]
-# 전방 ROI 길이(m)
-graph_roi_forward_m: 3.0
-# 좌우 ROI 반폭(m)
-graph_roi_lateral_half_m: 1.2
-# BEV 셀 크기(m). 작을수록 더 촘촘하지만 느려짐
-graph_cell_size_m: 0.05
-# 활성 셀로 인정할 최소 정규화 intensity
-graph_active_intensity_min: 0.5
-# 활성 셀로 인정할 최소 로컬 contrast
-graph_active_contrast_min: 0.1
-# 셀 하나를 유효하게 볼 최소 포인트 수
-graph_min_cell_points: 2
+# [2. 탐색 영역]
+# 앞쪽으로 보는 ROI 길이
+roi_forward_m: 3.0
+# 뒤쪽으로 포함하는 ROI 길이
+roi_backward_m: 0.4
+# 좌우로 보는 ROI 반폭
+roi_lateral_half_m: 0.9
+# 같은 차선으로 보는 선호 복도 반폭
+corridor_half_width_m: 0.18
 
-# [3. 활성 셀 노이즈 제거]
-# 고립 셀을 유지하기 위해 필요한 최소 활성 이웃 수
-graph_noise_min_neighbors: 2
-# 노이즈 제거 후 유지할 최소 연결 활성 셀 개수
-graph_noise_min_component_cells: 3
+# [3. 그리드]
+# 로컬 BEV 그리드 셀 크기
+grid_cell_size_m: 0.05
+# 활성 셀로 인정할 최소 정규화 강도
+active_intensity_min: 0.45
+# 활성 셀로 인정할 최소 포인트 수
+min_points_per_cell: 1
+# 후보 ridge가 가져야 하는 최소 셀 수
+component_min_cells: 4
+# 후보 ridge가 가져야 하는 최소 진행 길이
+component_min_span_m: 0.35
 
-# [4. 차선 박스]
-# 검출할 차선 박스의 종방향 길이(m)
-lane_box_length_m: 1.5
-# 검출할 차선 박스의 횡방향 폭(m)
-lane_box_width_m: 0.20000000000000004
-# 차선 박스 1개를 만들기 위한 최소 활성 셀 수
-lane_box_min_active_cells: 2
+# [4. 후보]
+# 오버레이와 프로파일에 쓰는 차선 폭
+stripe_width_m: 0.14
+# 후보 점수의 횡방향 오차 스케일
+candidate_lateral_sigma_m: 0.08
+# 후보 점수의 방향 오차 스케일
+candidate_heading_sigma_deg: 12.0
+# 후보를 채택할 최소 점수
+candidate_min_score: 0.72
 
-# [5. 안테나 엣지]
-# 차선 박스를 연결할 때 쓰는 전방 안테나 corridor 길이(m)
-antenna_length_m: 1.4999999999999996
-# 다음 차선 박스를 허용할 안테나 corridor 반폭(m)
-antenna_half_width_m: 0.09999999999999985
-# 차선 박스 연결 시 허용할 최대 진행방향 차이(도)
-antenna_heading_tolerance_deg: 10.0
+# [5. 진행 방향]
+# 이전 방향과 새 방향을 섞는 비율
+heading_smoothing_alpha: 0.35
+# 한 스텝에서 허용할 최대 방향 변화
+max_heading_change_deg: 8.0
 
-# [6. 빔 탐색]
-# 스텝마다 유지할 경로 가설 수
-graph_beam_width: 6
-# 앞으로 탐색할 노드 깊이
-graph_beam_horizon_nodes: 15
-# 노드 하나에서 확장할 최대 분기 수
-graph_beam_branching: 5
-
-# [7. 점수 가중치]
-# 강한 intensity에 줄 가중치
-graph_intensity_weight: 0.25
-# 로컬 contrast에 줄 가중치
-graph_contrast_weight: 0.18
-# 진행방향 및 곡률 연속성에 줄 가중치
-graph_direction_weight: 0.25
-# 과도한 거리 점프를 억제하는 가중치
-graph_distance_weight: 0.125
-# 최근 추적 이력과의 일관성 가중치
-graph_history_weight: 0.25
-# 점선 주기 일관성 가중치
-graph_period_weight: 0.1
-# 횡단보도처럼 보이는 패턴에 대한 패널티
-graph_crosswalk_penalty: 0.08
-
-# [8. 프로파일 및 차선 형상]
-# 단면 프로파일에 사용할 좌우 반폭(m)
-profile_lateral_half_m: 0.45
-# 프로파일 계산에 사용할 종방향 반길이(m)
-profile_along_half_m: 0.1
-# 프로파일의 좌우 bin 크기(m)
-profile_bin_size_m: 0.01
-# 쌍 에지 후보로 인정할 최소 차선 폭(m)
-twin_edge_min_width_m: 0.08
-# 쌍 에지 후보로 인정할 최대 차선 폭(m)
-twin_edge_max_width_m: 0.24
-# 쌍 에지를 검출할 최소 gradient
-edge_grad_min: 0.1
-# 프로파일 후보를 인정할 최소 지지 포인트 수
-candidate_min_support: 5
-# 후보를 채택할 최소 총점
-candidate_min_score: 0.3
-
-# [9. 종방향 신호 및 점선 패턴]
-# 1D 종방향 신호를 만들 때 사용할 반길이(m)
-along_signal_half_m: 1.2
-# 종방향 신호 bin 크기(m)
-along_signal_bin_m: 0.05
-# 종방향 신호를 수집할 좌우 반폭(m)
-along_signal_lateral_half_m: 0.12
-# 유효한 점선 주기로 볼 최소 거리(m)
-autocorr_min_period_m: 0.25
-# 유효한 점선 주기로 볼 최대 거리(m)
-autocorr_max_period_m: 1.2
-# 점선으로 분류할 최소 자기상관 점수
-dashed_autocorr_min: 0.2
-# 실선으로 분류할 최소 점유율
-solid_occupancy_min: 0.58
-
-# [10. 끊김 보정 및 연속성]
-# 유효 관측 없이 보정 이동할 최대 거리(m)
-gap_forward_distance_m: 10.0
-# 연속성 계산에 사용할 최근 노드 수
-continuity_node_count: 6
-# 연속성 패널티 강도
-continuity_strength: 1.5
-
-# [11. Z 필터링]
-# true이면 현재 차선 높이 근처 포인트만 사용
+# [6. 높이]
+# 추적 차선 주변 높이만 남길지 여부
 use_z_clip: true
-# 포인트 Z 클리핑에 사용할 반범위(m)
+# 로컬 Z 클립에 쓰는 높이 반범위
 z_clip_half_range_m: 0.3
-
-# [12. 횡단보도 처리]
-# true이면 횡단보도 패턴 검출 시 정지
-crosswalk_stop_enabled: true
-# 횡단보도 검사용 전방 거리(m)
-crosswalk_lookahead_m: 1.6
-# 횡단보도 검사용 좌우 반폭(m)
-crosswalk_lateral_half_m: 1.2
-# 횡단보도로 분류할 최소 반복 피크 수
-crosswalk_min_peaks: 4
-
-# [13. 내부 그리드]
-# 이웃 질의에 사용할 내부 spatial-grid 셀 크기(m)
-spatial_grid_cell_size_m: 0.1
-
-# [기타]
-graph_neighbor_max_distance_m: 0.18
-graph_neighbor_lateral_limit_m: 0.18
-segment_min_length_m: 0.2
-segment_target_length_m: 0.5
-segment_max_length_m: 1.0
-segment_heading_gate_deg: 5.0

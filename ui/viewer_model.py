@@ -22,8 +22,6 @@ class ViewerModel:
     stripe_segment_points: np.ndarray | None = None
     stripe_edge_points: np.ndarray | None = None
     search_box_points: np.ndarray | None = None
-    candidate_circle_groups: list[np.ndarray] | None = None
-    selected_circle_points: np.ndarray | None = None
     profile: object | None = None
     status_text: str = ""
     point_cloud_revision: int = 0

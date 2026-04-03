@@ -47,8 +47,6 @@ class PointCloudViewWidget(QtWidgets.QWidget):
         self._stripe_segment_poly: object | None = None
         self._stripe_edge_poly: object | None = None
         self._search_box_poly: object | None = None
-        self._candidate_circle_poly: object | None = None
-        self._selected_circle_poly: object | None = None
         self._display_actor = None
         self._detail_actor = None
         self._seed_line_actor = None
@@ -64,8 +62,6 @@ class PointCloudViewWidget(QtWidgets.QWidget):
         self._stripe_segment_actor = None
         self._stripe_edge_actor = None
         self._search_box_actor = None
-        self._candidate_circle_actor = None
-        self._selected_circle_actor = None
         self._display_limit = 100_000
         self._pick_limit = 1_500_000
         self._detail_source_limit = 4_000_000
@@ -502,54 +498,6 @@ class PointCloudViewWidget(QtWidgets.QWidget):
         if render:
             self.plotter.render()
 
-    def set_candidate_circles(
-        self,
-        circle_groups: list[np.ndarray] | None,
-        selected_circle: np.ndarray | None,
-        render: bool = True,
-    ) -> None:
-        if self.plotter is None:
-            return
-
-        if self._candidate_circle_actor is not None:
-            self.plotter.remove_actor(self._candidate_circle_actor, render=False)
-            self._candidate_circle_actor = None
-        if self._selected_circle_actor is not None:
-            self.plotter.remove_actor(self._selected_circle_actor, render=False)
-            self._selected_circle_actor = None
-
-        self._candidate_circle_poly = None
-        self._selected_circle_poly = None
-
-        if circle_groups:
-            poly = self._polydata_from_polylines(circle_groups)
-            if poly is not None:
-                self._candidate_circle_poly = poly
-                self._candidate_circle_actor = self.plotter.add_mesh(
-                    poly,
-                    color="#fde047",
-                    line_width=2.4,
-                    opacity=0.92,
-                    render_lines_as_tubes=False,
-                    reset_camera=False,
-                )
-
-        if selected_circle is not None and np.asarray(selected_circle).size:
-            poly = self._polydata_from_polylines([selected_circle])
-            if poly is not None:
-                self._selected_circle_poly = poly
-                self._selected_circle_actor = self.plotter.add_mesh(
-                    poly,
-                    color="#ef4444",
-                    line_width=2.5,
-                    opacity=0.95,
-                    render_lines_as_tubes=False,
-                    reset_camera=False,
-                )
-
-        if render:
-            self.plotter.render()
-
     def _open_context_menu(self, pos) -> None:
         point = self._point_from_widget_pos(pos)
         global_pos = self.plotter.interactor.mapToGlobal(pos)
@@ -671,8 +619,6 @@ class PointCloudViewWidget(QtWidgets.QWidget):
         self._stripe_segment_poly = None
         self._stripe_edge_poly = None
         self._search_box_poly = None
-        self._candidate_circle_poly = None
-        self._selected_circle_poly = None
         self._cloud_revision = -1
         self._detail_xyz_local = None
         self._detail_xy_local = None
@@ -685,7 +631,7 @@ class PointCloudViewWidget(QtWidgets.QWidget):
         self._viewport_timer.stop()
         if self.plotter is None:
             return
-        for actor_name in ["_display_actor", "_detail_actor", "_seed_line_actor", "_seed_p0_actor", "_seed_p1_actor", "_track_actor", "_current_actor", "_pred_actor", "_active_cell_actor", "_segment_actor", "_trajectory_line_actor", "_profile_line_actor", "_stripe_segment_actor", "_stripe_edge_actor", "_search_box_actor", "_candidate_circle_actor", "_selected_circle_actor"]:
+        for actor_name in ["_display_actor", "_detail_actor", "_seed_line_actor", "_seed_p0_actor", "_seed_p1_actor", "_track_actor", "_current_actor", "_pred_actor", "_active_cell_actor", "_segment_actor", "_trajectory_line_actor", "_profile_line_actor", "_stripe_segment_actor", "_stripe_edge_actor", "_search_box_actor"]:
             actor = getattr(self, actor_name)
             if actor is not None:
                 self.plotter.remove_actor(actor, render=False)

@@ -8,7 +8,7 @@ import numpy as np
 from ..core.types import StopReason, TrackMode
 from ..io.las_io import load_las_xyz_intensity
 from ..tracker.config import DEFAULT_CONFIG_PATH, TrackerConfig, ensure_config_file, load_tracker_config, save_tracker_config
-from ..tracker.lane_tracker_bev_graph import BevGraphTracker, DebugFrame, TrackerResult, TrackerSnapshot, TrackerState
+from ..tracker.lane_tracker_simple_spline import DebugFrame, SimpleSplineTracker, TrackerResult, TrackerSnapshot, TrackerState
 from .viewer_model import ViewerModel
 
 
@@ -20,7 +20,7 @@ class TrackerController(QtCore.QObject):
         super().__init__()
         self.model = ViewerModel()
         self.las = None
-        self.tracker: BevGraphTracker | None = None
+        self.tracker: SimpleSplineTracker | None = None
         self._undo_stack: list[TrackerSnapshot] = []
         self._config_path = ensure_config_file(DEFAULT_CONFIG_PATH)
         self._tracker_cfg = load_tracker_config(self._config_path)
@@ -80,8 +80,6 @@ class TrackerController(QtCore.QObject):
         self.model.stripe_segment_points = None
         self.model.stripe_edge_points = None
         self.model.search_box_points = None
-        self.model.candidate_circle_groups = None
-        self.model.selected_circle_points = None
         self.model.status_text = f"Loaded {len(self.las.xyz):,} points"
         self.log_message.emit(f"Loaded LAS: {path}, points={len(self.las.xyz):,}")
         self.changed.emit()
@@ -106,9 +104,15 @@ class TrackerController(QtCore.QObject):
             self.tracker.apply_config(self._tracker_cfg)
             self.tracker.reset()
         else:
-            self.tracker = BevGraphTracker(self.las.xyz, self.las.intensity, self._tracker_cfg)
+            self.tracker = SimpleSplineTracker(self.las.xyz, self.las.intensity, self._tracker_cfg)
 
-        self.tracker.initialize(self.model.p0, self.model.p1)
+        try:
+            self.tracker.initialize(self.model.p0, self.model.p1)
+        except Exception as exc:
+            self.model.status_text = f"Init failed | {exc}"
+            self.log_message.emit(f"Init failed: {exc}")
+            self.changed.emit()
+            raise
         self._undo_stack = [self.tracker.make_snapshot()]
         self._update_model_from_tracker(self.tracker.get_current_state(), self.tracker.get_last_debug_frame())
         self.model.status_text = f"Initialized | mode={self.tracker.get_current_state().mode.value}"
@@ -196,8 +200,6 @@ class TrackerController(QtCore.QObject):
         self.model.stripe_segment_points = None
         self.model.stripe_edge_points = None
         self.model.search_box_points = None
-        self.model.candidate_circle_groups = None
-        self.model.selected_circle_points = None
         self.model.profile = None
         self.model.status_text = "Reset"
         self.log_message.emit("Reset")
@@ -208,12 +210,17 @@ class TrackerController(QtCore.QObject):
         self.model.track_points = np.asarray(state.history_centers, dtype=float) if state is not None else None
         self.model.predicted_points = dbg.candidate_points if dbg is not None else None
         self.model.active_cell_box_groups = dbg.active_cell_box_groups if dbg is not None else None
-        self.model.segment_groups = dbg.segment_groups if dbg is not None else None
-        self.model.trajectory_line_points = dbg.trajectory_line_points if dbg is not None else None
+        if dbg is None:
+            self.model.segment_groups = None
+            self.model.trajectory_line_points = None
+        else:
+            preserve_visuals = dbg.source in ("gap", "gap_reject")
+            if dbg.segment_groups is not None or not preserve_visuals:
+                self.model.segment_groups = dbg.segment_groups
+            if dbg.trajectory_line_points is not None or not preserve_visuals:
+                self.model.trajectory_line_points = dbg.trajectory_line_points
         self.model.search_box_points = dbg.search_box_points if dbg is not None else None
         self.model.profile = dbg.profile if dbg is not None else None
-        self.model.candidate_circle_groups = dbg.graph_edge_groups if dbg is not None else None
-        self.model.selected_circle_points = None
         self._update_profile_overlay(state)
 
     def _update_profile_overlay(self, state: TrackerState | None) -> None:
@@ -264,7 +271,9 @@ class TrackerController(QtCore.QObject):
                     "OBS | "
                     f"src={source} | cand={candidate_count} | angle={chosen.angle_offset_deg:.1f} | "
                     f"intensity={chosen.intensity_score:.3f} | contrast={chosen.contrast_score:.3f} | "
-                    f"ac={chosen.autocorr_score:.3f} | cont={chosen.continuity_score:.3f} | path={chosen.path_score:.3f}"
+                    f"ac={chosen.autocorr_score:.3f} | cont={chosen.continuity_score:.3f} | path={chosen.path_score:.3f} | "
+                    f"fill={chosen.fill_ratio:.3f} | ident={chosen.identity_score:.3f} | switch={chosen.switch_penalty:.3f} | "
+                    f"end_lat={chosen.endpoint_lateral_m:.3f} | fident={chosen.future_identity_score:.3f} | fswitch={chosen.future_switch_penalty:.3f}"
                 )
             else:
                 self.log_message.emit(
