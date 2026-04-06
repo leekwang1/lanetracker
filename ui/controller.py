@@ -207,7 +207,7 @@ class TrackerController(QtCore.QObject):
 
     def _update_model_from_tracker(self, state: TrackerState | None, dbg: DebugFrame | None) -> None:
         self.model.current_point = state.center_xyz.copy() if state is not None else None
-        self.model.track_points = np.asarray(state.history_centers, dtype=float) if state is not None else None
+        self.model.track_points = np.asarray(state.path_centers, dtype=float) if state is not None else None
         self.model.predicted_points = dbg.candidate_points if dbg is not None else None
         self.model.active_cell_box_groups = dbg.active_cell_box_groups if dbg is not None else None
         if dbg is None:

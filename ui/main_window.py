@@ -23,6 +23,7 @@ CONFIG_WIDGET_SPECS: dict[str, tuple] = {
     "min_points_per_cell": ("int", 1, 20),
     "component_min_cells": ("int", 1, 100),
     "component_min_span_m": ("float", 0.05, 3.0, 0.01),
+    "active_box_display_limit": ("int", 0, 5000),
     "stripe_width_m": ("float", 0.03, 1.0, 0.01),
     "candidate_lateral_sigma_m": ("float", 0.01, 0.50, 0.01),
     "candidate_heading_sigma_deg": ("float", 1.0, 45.0, 1.0),

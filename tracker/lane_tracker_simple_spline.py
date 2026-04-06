@@ -148,6 +148,8 @@ class TrackerState:
     curvature: float
     history_centers: list[np.ndarray] = field(default_factory=list)
     history_headings: list[np.ndarray] = field(default_factory=list)
+    path_centers: list[np.ndarray] = field(default_factory=list)
+    path_headings: list[np.ndarray] = field(default_factory=list)
 
 
 @dataclass
@@ -208,6 +210,40 @@ class _ComponentCandidate:
     max_abs_lateral_m: float
     heading_xy: np.ndarray
     heading_error_rad: float
+    sample_left_edge: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    sample_right_edge: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    width_m: float = 0.0
+    intensity_score: float = 0.0
+    contrast_score: float = 0.0
+
+
+@dataclass
+class _StripePair1D:
+    left_idx: int
+    right_idx: int
+    left_m: float
+    right_m: float
+    center_m: float
+    width_m: float
+    edge_strength: float
+    inside_mean: float
+    contrast_score: float
+    score: float
+
+
+@dataclass
+class _RowStripe:
+    along_idx: int
+    along_m: float
+    left_edge_m: float
+    right_edge_m: float
+    lateral_center_m: float
+    width_m: float
+    weight: float
+    intensity_mean: float
+    edge_strength: float
+    contrast_score: float
+    cells: list[tuple[int, int]]
 
 
 @dataclass
@@ -310,6 +346,8 @@ class SimpleSplineTracker:
             curvature=0.0,
             history_centers=[center_xyz.copy()],
             history_headings=[heading_xy.copy()],
+            path_centers=[center_xyz.copy()],
+            path_headings=[heading_xy.copy()],
         )
 
         best, dbg = self._observe(self.state, seed_mode=True)
@@ -376,7 +414,7 @@ class SimpleSplineTracker:
             self.state.solid_score *= 0.95
             self.state.crosswalk_score = 0.0
             self.state.gap_distance_m += float(self.cfg.forward_distance_m)
-            self._append_history(self.state.center_xyz, self.state.tangent_xy)
+            self._append_path(self.state.center_xyz, self.state.tangent_xy)
             self._distance_travelled_m += float(self.cfg.forward_distance_m)
             dbg.source = "gap_reject" if best is not None else "gap"
             dbg.chosen_candidate = best
@@ -400,7 +438,7 @@ class SimpleSplineTracker:
     def run_full(self) -> TrackerResult:
         while self.stop_reason == StopReason.NONE:
             self.step()
-        dense = np.asarray(self.state.history_centers, dtype=np.float64) if self.state is not None else np.empty((0, 3), dtype=np.float64)
+        dense = np.asarray(self.state.path_centers, dtype=np.float64) if self.state is not None else np.empty((0, 3), dtype=np.float64)
         return TrackerResult(
             dense_points=dense,
             output_points=dense,
@@ -431,27 +469,21 @@ class SimpleSplineTracker:
             )
             return None, dbg
 
-        candidates: list[ObservationCandidate] = []
-        component_records: list[_ComponentCandidate] = []
-        for record in self._build_ridge_candidates(state, pred_heading, cell_view):
-            component_records.append(record)
-            candidates.append(self._record_to_observation(state, pred_heading, record))
-
-        candidates.sort(key=lambda c: c.total_score, reverse=True)
-        component_records.sort(key=lambda r: r.score, reverse=True)
-        best = candidates[0] if candidates else None
-        best_record = component_records[0] if component_records else None
+        best_record = self._build_best_stripe_record(state, pred_heading, cell_view)
+        best = self._record_to_observation(state, pred_heading, best_record) if best_record is not None else None
 
         candidate_points = self._component_to_world_polyline(state, pred_heading, best_record, float(state.center_xyz[2])) if best_record is not None else None
-        segment_groups = [
-            self._component_to_world_polyline(state, pred_heading, record, float(state.center_xyz[2]))
-            for record in component_records[:3]
-        ] or None
+        segment_groups = self._component_to_world_edge_polylines(state, pred_heading, best_record, float(state.center_xyz[2])) if best_record is not None else None
         active_boxes = self._make_active_cell_boxes(state, pred_heading, cell_view)
-        candidate_summaries = [
-            f"score={cand.total_score:.2f} | cells={cand.path_node_count} | span={cand.path_length_m:.2f} | end_lat={cand.endpoint_lateral_m:.2f}"
-            for cand in candidates[:3]
-        ]
+        candidate_count = 1 if best is not None else 0
+        if best is not None:
+            candidate_summaries = [
+                f"stripe | score={best.total_score:.2f} | cells={best.path_node_count} | span={best.path_length_m:.2f} | "
+                f"width={best.width_m:.3f} | int={best.intensity_score:.3f} | contrast={best.contrast_score:.3f} | "
+                f"start_lat={best.center_lateral_m:.2f} | end_lat={best.endpoint_lateral_m:.2f}"
+            ]
+        else:
+            candidate_summaries = ["No valid stripe"]
         dbg = DebugFrame(
             step_index=self._step_index,
             source="box_graph",
@@ -459,7 +491,7 @@ class SimpleSplineTracker:
             active_cell_box_groups=active_boxes,
             segment_groups=segment_groups,
             chosen_candidate=best,
-            candidate_count=len(candidates),
+            candidate_count=candidate_count,
             stop_reason=None,
             profile=best.profile if best is not None else None,
             trajectory_line_points=self._build_trajectory_preview(state, pred_heading, best_record),
@@ -471,6 +503,12 @@ class SimpleSplineTracker:
 
     def _accept_candidate(self, state: TrackerState, obs: ObservationCandidate | None) -> bool:
         if obs is None:
+            return False
+        min_accept_span = max(
+            float(self.cfg.component_min_span_m),
+            min(float(self.cfg.roi_forward_m) * 0.40, float(self.cfg.forward_distance_m) * 3.5),
+        )
+        if obs.path_length_m < min_accept_span:
             return False
         score_gate = float(self.cfg.candidate_min_score)
         if state.gap_distance_m > 0.0:
@@ -495,9 +533,40 @@ class SimpleSplineTracker:
         return pred_xy, pred_heading, curvature
 
     def _predict_gap_pose(self, state: TrackerState) -> tuple[np.ndarray, np.ndarray]:
-        _, pred_heading, _ = self._predict_pose(state)
-        next_xy = state.center_xyz[:2] + pred_heading * float(self.cfg.forward_distance_m)
-        return next_xy, pred_heading
+        step_distance = float(self.cfg.forward_distance_m)
+        current_heading = _normalize(state.tangent_xy)
+        curvature = float(state.curvature)
+        if abs(curvature) <= 1e-6:
+            next_heading = current_heading
+            delta_xy = current_heading * step_distance
+        else:
+            delta_angle = curvature * step_distance
+            half_angle = 0.5 * delta_angle
+            c_half = math.cos(half_angle)
+            s_half = math.sin(half_angle)
+            mid_heading = _normalize(
+                np.array(
+                    [
+                        current_heading[0] * c_half - current_heading[1] * s_half,
+                        current_heading[0] * s_half + current_heading[1] * c_half,
+                    ],
+                    dtype=np.float64,
+                )
+            )
+            c_full = math.cos(delta_angle)
+            s_full = math.sin(delta_angle)
+            next_heading = _normalize(
+                np.array(
+                    [
+                        current_heading[0] * c_full - current_heading[1] * s_full,
+                        current_heading[0] * s_full + current_heading[1] * c_full,
+                    ],
+                    dtype=np.float64,
+                )
+            )
+            delta_xy = mid_heading * step_distance
+        next_xy = state.center_xyz[:2] + delta_xy
+        return next_xy, next_heading
 
     def _build_active_cells(self, state: TrackerState, heading_xy: np.ndarray) -> dict[str, np.ndarray] | None:
         center_xy = state.center_xyz[:2]
@@ -641,6 +710,317 @@ class SimpleSplineTracker:
                 keep_mask[row_idx, lo:hi] |= row_active[lo:hi]
 
         return keep_mask
+
+    def _extract_stripe_pairs_1d(
+        self,
+        signal: np.ndarray,
+        valid_mask: np.ndarray,
+        lateral_centers: np.ndarray,
+        cell_size: float,
+    ) -> list[_StripePair1D]:
+        smooth = np.convolve(
+            np.asarray(signal, dtype=np.float64),
+            np.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=np.float64) / 9.0,
+            mode="same",
+        )
+        valid_values = smooth[np.asarray(valid_mask, dtype=bool)]
+        if valid_values.size == 0:
+            return []
+
+        baseline = float(np.percentile(valid_values, 40.0))
+        peak = float(np.max(valid_values))
+        dynamic = max(peak - baseline, 0.0)
+        edge_floor = max(0.015, dynamic * 0.18)
+        inside_floor = baseline + max(0.02, dynamic * 0.22)
+        target_width = max(float(self.cfg.stripe_width_m), cell_size * 1.5)
+        width_tol = max(cell_size * 1.0, target_width * 0.35)
+        min_width = max(cell_size * 0.8, target_width - width_tol)
+        max_width = max(min_width + cell_size * 0.5, target_width + width_tol)
+
+        deriv = np.gradient(smooth)
+        rise_indices: list[int] = []
+        fall_indices: list[int] = []
+        for idx in range(1, len(smooth) - 1):
+            if not (valid_mask[idx] or valid_mask[idx - 1] or valid_mask[idx + 1]):
+                continue
+            if deriv[idx] >= deriv[idx - 1] and deriv[idx] >= deriv[idx + 1] and deriv[idx] >= edge_floor:
+                rise_indices.append(idx)
+            if deriv[idx] <= deriv[idx - 1] and deriv[idx] <= deriv[idx + 1] and -deriv[idx] >= edge_floor:
+                fall_indices.append(idx)
+
+        pairs: list[_StripePair1D] = []
+        for rise_idx in rise_indices:
+            for fall_idx in fall_indices:
+                if fall_idx <= rise_idx:
+                    continue
+                width_m = float(lateral_centers[fall_idx] - lateral_centers[rise_idx])
+                if width_m < min_width:
+                    continue
+                if width_m > max_width:
+                    break
+                inside_slice = smooth[rise_idx : fall_idx + 1]
+                if inside_slice.size == 0:
+                    continue
+                inside_peak = float(np.max(inside_slice))
+                inside_mean = float(np.mean(inside_slice))
+                if inside_peak < inside_floor:
+                    continue
+                left_outer = baseline if rise_idx < 2 else float(np.mean(smooth[max(0, rise_idx - 2) : rise_idx]))
+                right_outer = baseline if fall_idx + 2 >= len(smooth) else float(np.mean(smooth[fall_idx + 1 : min(len(smooth), fall_idx + 3)]))
+                contrast = inside_mean - 0.5 * (left_outer + right_outer)
+                edge_strength = max(float(deriv[rise_idx]), 0.0) + max(float(-deriv[fall_idx]), 0.0)
+                width_score = math.exp(-abs(width_m - target_width) / max(target_width * 0.35, cell_size))
+                score = 0.45 * edge_strength + 0.30 * max(contrast, 0.0) + 0.15 * inside_mean + 0.10 * width_score
+                if score < 0.03:
+                    continue
+                pairs.append(
+                    _StripePair1D(
+                        left_idx=rise_idx,
+                        right_idx=fall_idx,
+                        left_m=float(lateral_centers[rise_idx]),
+                        right_m=float(lateral_centers[fall_idx]),
+                        center_m=float(0.5 * (lateral_centers[rise_idx] + lateral_centers[fall_idx])),
+                        width_m=width_m,
+                        edge_strength=edge_strength,
+                        inside_mean=inside_mean,
+                        contrast_score=max(contrast, 0.0),
+                        score=score,
+                    )
+                )
+
+        pairs.sort(key=lambda pair: pair.score, reverse=True)
+        selected: list[_StripePair1D] = []
+        sep_floor = max(target_width * 0.60, cell_size * 2.0)
+        for pair in pairs:
+            if any(abs(pair.center_m - prev.center_m) < sep_floor for prev in selected):
+                continue
+            selected.append(pair)
+            if len(selected) >= 4:
+                break
+        return selected
+
+    def _extract_row_stripes(self, cell_view: dict[str, np.ndarray]) -> list[list[_RowStripe]]:
+        count_grid = cell_view["count_grid"]
+        mean_grid = cell_view["mean_grid"]
+        along_centers = cell_view["along_centers"]
+        lateral_centers = cell_view["lateral_centers"]
+        cell_size = float(cell_view["cell_size"][0])
+
+        row_stripes: list[list[_RowStripe]] = []
+        for a_idx in range(count_grid.shape[0]):
+            row_counts = np.asarray(count_grid[a_idx], dtype=np.int32)
+            row_signal = np.where(row_counts > 0, mean_grid[a_idx], 0.0)
+            row_valid = row_counts > 0
+            pairs = self._extract_stripe_pairs_1d(row_signal, row_valid, lateral_centers, cell_size)
+            stripes: list[_RowStripe] = []
+            for pair in pairs:
+                cell_cols = [col_idx for col_idx in range(pair.left_idx, pair.right_idx + 1) if row_counts[col_idx] > 0]
+                if not cell_cols:
+                    continue
+                intensity_values = np.asarray([float(mean_grid[a_idx, col_idx]) for col_idx in cell_cols], dtype=np.float64)
+                cell_weights = np.asarray(
+                    [max(float(mean_grid[a_idx, col_idx]), 0.05) * max(int(row_counts[col_idx]), 1) for col_idx in cell_cols],
+                    dtype=np.float64,
+                )
+                weight_sum = float(np.sum(cell_weights))
+                if weight_sum <= 1e-9:
+                    continue
+                intensity_mean = float(np.sum(intensity_values * cell_weights) / weight_sum)
+                stripes.append(
+                    _RowStripe(
+                        along_idx=a_idx,
+                        along_m=float(along_centers[a_idx]),
+                        left_edge_m=pair.left_m,
+                        right_edge_m=pair.right_m,
+                        lateral_center_m=pair.center_m,
+                        width_m=pair.width_m,
+                        weight=float(weight_sum + 2.0 * pair.edge_strength + pair.contrast_score),
+                        intensity_mean=intensity_mean,
+                        edge_strength=pair.edge_strength,
+                        contrast_score=pair.contrast_score,
+                        cells=[(a_idx, col_idx) for col_idx in cell_cols],
+                    )
+                )
+            row_stripes.append(stripes)
+        return row_stripes
+
+    def _build_best_stripe_record(
+        self,
+        state: TrackerState,
+        pred_heading: np.ndarray,
+        cell_view: dict[str, np.ndarray],
+    ) -> _ComponentCandidate | None:
+        row_stripes = self._extract_row_stripes(cell_view)
+        if not any(row_stripes):
+            return None
+
+        cell_size = float(cell_view["cell_size"][0])
+        target_width = max(float(self.cfg.stripe_width_m), cell_size * 1.5)
+        corridor_half = max(float(self.cfg.corridor_half_width_m), target_width)
+        min_span = max(float(self.cfg.component_min_span_m), float(self.cfg.forward_distance_m))
+        max_row_gap = 2
+
+        dp_scores: dict[tuple[int, int], float] = {}
+        back_ptr: dict[tuple[int, int], tuple[int, int] | None] = {}
+
+        for row_idx, stripes in enumerate(row_stripes):
+            for stripe_idx, stripe in enumerate(stripes):
+                width_penalty = abs(stripe.width_m - target_width) / max(target_width, 1e-6)
+                node_score = (
+                    0.45 * stripe.edge_strength
+                    + 0.30 * stripe.contrast_score
+                    + 0.15 * stripe.intensity_mean
+                    + 0.10 * min(stripe.weight / 8.0, 1.0)
+                    - 0.25 * width_penalty
+                    - 0.35 * (abs(stripe.lateral_center_m) / corridor_half)
+                )
+                best_total = node_score
+                best_prev: tuple[int, int] | None = None
+
+                for prev_gap in range(1, max_row_gap + 2):
+                    prev_row = row_idx - prev_gap
+                    if prev_row < 0:
+                        break
+                    for prev_idx, prev_stripe in enumerate(row_stripes[prev_row]):
+                        prev_key = (prev_row, prev_idx)
+                        if prev_key not in dp_scores:
+                            continue
+                        lat_jump = abs(stripe.lateral_center_m - prev_stripe.lateral_center_m)
+                        width_jump = abs(stripe.width_m - prev_stripe.width_m)
+                        trans_penalty = (
+                            0.80 * (lat_jump / corridor_half)
+                            + 0.35 * (width_jump / max(target_width, 1e-6))
+                            + 0.18 * float(prev_gap - 1)
+                        )
+                        total = dp_scores[prev_key] + node_score - trans_penalty
+                        if total > best_total:
+                            best_total = total
+                            best_prev = prev_key
+
+                dp_scores[(row_idx, stripe_idx)] = best_total
+                back_ptr[(row_idx, stripe_idx)] = best_prev
+
+        if not dp_scores:
+            return None
+
+        best_key = max(dp_scores.keys(), key=lambda key: dp_scores[key])
+        path: list[_RowStripe] = []
+        cursor: tuple[int, int] | None = best_key
+        while cursor is not None:
+            row_idx, stripe_idx = cursor
+            path.append(row_stripes[row_idx][stripe_idx])
+            cursor = back_ptr.get(cursor)
+        path.reverse()
+
+        if not path:
+            return None
+
+        along_values = np.asarray([stripe.along_m for stripe in path], dtype=np.float64)
+        span_m = float(along_values.max() - along_values.min() + cell_size)
+        if span_m < min_span:
+            return None
+
+        return self._fit_stripe_record(state, pred_heading, cell_view, path)
+
+    def _fit_stripe_record(
+        self,
+        state: TrackerState,
+        pred_heading: np.ndarray,
+        cell_view: dict[str, np.ndarray],
+        path: list[_RowStripe],
+    ) -> _ComponentCandidate | None:
+        if not path:
+            return None
+
+        cell_size = float(cell_view["cell_size"][0])
+        along_values = np.asarray([stripe.along_m for stripe in path], dtype=np.float64)
+        left_values = np.asarray([stripe.left_edge_m for stripe in path], dtype=np.float64)
+        right_values = np.asarray([stripe.right_edge_m for stripe in path], dtype=np.float64)
+        center_values = 0.5 * (left_values + right_values)
+        width_values = right_values - left_values
+        weights = np.asarray([stripe.weight for stripe in path], dtype=np.float64)
+        support_rows = len(path)
+        span_m = float(along_values.max() - along_values.min() + cell_size)
+        if support_rows < 2 or span_m < max(float(self.cfg.component_min_span_m), float(self.cfg.forward_distance_m)):
+            return None
+
+        degree = min(2, support_rows - 1)
+        left_coeff = np.polyfit(along_values, left_values, degree, w=np.maximum(weights, 1e-3))
+        right_coeff = np.polyfit(along_values, right_values, degree, w=np.maximum(weights, 1e-3))
+        sample_end = max(float(self.cfg.forward_distance_m), min(float(self.cfg.roi_forward_m), along_values.max() + cell_size * 0.5))
+        sample_count = max(10, int(math.ceil(sample_end / max(cell_size, 0.05))) * 2)
+        sample_along = np.linspace(0.0, sample_end, sample_count, dtype=np.float64)
+        sample_left = np.polyval(left_coeff, sample_along)
+        sample_right = np.polyval(right_coeff, sample_along)
+        sample_center = 0.5 * (sample_left + sample_right)
+        sample_width = sample_right - sample_left
+
+        if np.any(sample_width < cell_size * 0.5):
+            return None
+
+        start_lateral = float(np.interp(0.0, sample_along, sample_center))
+        step_lateral = float(np.interp(float(self.cfg.forward_distance_m), sample_along, sample_center))
+        end_along = float(min(sample_end, along_values.max() + cell_size * 0.5))
+        end_lateral = float(np.interp(end_along, sample_along, sample_center))
+        max_abs_lateral = float(np.max(np.abs(sample_center)))
+        width_m = float(np.median(width_values))
+
+        center_coeff = np.polyfit(along_values, center_values, degree, w=np.maximum(weights, 1e-3))
+        if center_coeff.size <= 1:
+            step_slope = 0.0
+        else:
+            deriv_coeff = np.polyder(center_coeff)
+            step_slope = float(np.polyval(deriv_coeff, min(float(self.cfg.forward_distance_m), sample_end)))
+        tangent, normal = make_frame(pred_heading)
+        heading_xy = _normalize(tangent + normal * step_slope)
+        heading_error = _angle_between(pred_heading, heading_xy)
+
+        lateral_sigma = max(float(self.cfg.candidate_lateral_sigma_m), 1e-3)
+        heading_sigma = max(math.radians(float(self.cfg.candidate_heading_sigma_deg)), 1e-3)
+        corridor_width = max(float(self.cfg.corridor_half_width_m), 0.01)
+
+        start_score = math.exp(-abs(start_lateral) / lateral_sigma)
+        future_score = math.exp(-abs(step_lateral) / lateral_sigma)
+        heading_score = math.exp(-heading_error / heading_sigma)
+
+        coverage_ratio = float(np.clip(support_rows / max(int(round(span_m / max(cell_size, 1e-6))), 1), 0.0, 1.0))
+        support_score = float(np.clip(span_m / max(float(self.cfg.component_min_span_m), float(self.cfg.forward_distance_m)), 0.0, 1.0))
+        edge_score = float(np.clip(np.mean([stripe.edge_strength for stripe in path]) / 0.25, 0.0, 1.0))
+        contrast_score = float(np.clip(np.mean([stripe.contrast_score for stripe in path]) / 0.18, 0.0, 1.0))
+        support_combo = 0.40 * coverage_ratio + 0.30 * support_score + 0.15 * edge_score + 0.15 * contrast_score
+        corridor_penalty = math.exp(-max(0.0, max_abs_lateral - corridor_width) / max(lateral_sigma, 1e-6))
+        base_score = 0.42 * start_score + 0.28 * future_score + 0.15 * heading_score + 0.15 * support_combo
+        total_score = corridor_penalty * base_score
+        if total_score < 0.05:
+            return None
+
+        cells = [cell for stripe in path for cell in stripe.cells]
+        cell_centers = np.asarray([[stripe.along_m, stripe.lateral_center_m] for stripe in path], dtype=np.float64)
+        mean_intensity = float(np.mean([stripe.intensity_mean for stripe in path])) if path else 0.0
+        mean_contrast = float(np.mean([stripe.contrast_score for stripe in path])) if path else 0.0
+        return _ComponentCandidate(
+            cells=cells,
+            cell_centers_local=cell_centers,
+            cell_weights=weights,
+            poly_coeff=np.asarray(center_coeff, dtype=np.float64),
+            sample_along=sample_along,
+            sample_lateral=sample_center,
+            unique_along_count=int(support_rows),
+            span_m=span_m,
+            coverage_ratio=coverage_ratio,
+            score=float(np.clip(total_score, 0.0, 1.0)),
+            start_lateral_m=start_lateral,
+            step_lateral_m=step_lateral,
+            end_lateral_m=end_lateral,
+            max_abs_lateral_m=max_abs_lateral,
+            heading_xy=heading_xy,
+            heading_error_rad=heading_error,
+            sample_left_edge=sample_left,
+            sample_right_edge=sample_right,
+            width_m=width_m,
+            intensity_score=mean_intensity,
+            contrast_score=mean_contrast,
+        )
 
     def _extract_row_clusters(self, cell_view: dict[str, np.ndarray]) -> list[list[_RowCluster]]:
         active_mask = cell_view["active_mask"]
@@ -886,7 +1266,13 @@ class SimpleSplineTracker:
         tangent, normal = make_frame(pred_heading)
         center_xy = state.center_xyz[:2] + tangent * float(self.cfg.forward_distance_m) + normal * record.step_lateral_m
         z_ref = self._estimate_z_ref(center_xy, float(state.center_xyz[2]))
-        profile = self._build_profile(center_xy, record.heading_xy, z_ref, record.step_lateral_m)
+        step_along = float(self.cfg.forward_distance_m)
+        step_left_abs = float(np.interp(step_along, record.sample_along, record.sample_left_edge))
+        step_right_abs = float(np.interp(step_along, record.sample_along, record.sample_right_edge))
+        step_center_abs = float(np.interp(step_along, record.sample_along, record.sample_lateral))
+        left_edge_rel = step_left_abs - step_center_abs
+        right_edge_rel = step_right_abs - step_center_abs
+        profile = self._build_profile(center_xy, record.heading_xy, z_ref, 0.0)
         fill_ratio = float(np.clip(record.coverage_ratio, 0.0, 1.0))
         dashed_score = float(np.clip(1.0 - fill_ratio * 1.2, 0.0, 1.0))
         solid_score = float(np.clip(fill_ratio * 1.15, 0.0, 1.0))
@@ -896,17 +1282,17 @@ class SimpleSplineTracker:
         switch_penalty = float(np.clip(abs(record.start_lateral_m) / max(float(self.cfg.corridor_half_width_m), 1e-6), 0.0, 1.0))
         future_switch_penalty = float(np.clip(abs(record.step_lateral_m) / max(float(self.cfg.corridor_half_width_m), 1e-6), 0.0, 1.0))
         continuity = float(np.clip(0.55 * future_identity + 0.45 * solid_score, 0.0, 1.0))
-        intensity_score = float(np.clip(np.mean(record.cell_weights) / max(np.max(record.cell_weights), 1.0), 0.0, 1.0))
-        contrast_score = float(np.clip(record.coverage_ratio, 0.0, 1.0))
-        stripe_width = float(self.cfg.stripe_width_m)
+        intensity_score = float(np.clip(record.intensity_score, 0.0, 1.0))
+        contrast_score = float(np.clip(record.contrast_score, 0.0, 1.0))
+        stripe_width = float(max(step_right_abs - step_left_abs, 0.05))
         return ObservationCandidate(
             center_xy=center_xy,
             center_xyz=np.array([center_xy[0], center_xy[1], z_ref], dtype=np.float64),
             heading_xy=record.heading_xy,
             angle_offset_deg=math.degrees(_signed_angle(pred_heading, record.heading_xy)),
-            stripe_center_m=record.step_lateral_m,
-            left_edge_m=-0.5 * stripe_width,
-            right_edge_m=0.5 * stripe_width,
+            stripe_center_m=0.0,
+            left_edge_m=float(left_edge_rel),
+            right_edge_m=float(right_edge_rel),
             width_m=stripe_width,
             intensity_score=intensity_score,
             contrast_score=contrast_score,
@@ -967,19 +1353,35 @@ class SimpleSplineTracker:
         hist, edges = np.histogram(lateral, bins=bins, weights=weights)
         centers = 0.5 * (edges[:-1] + edges[1:])
         smooth = np.convolve(hist, np.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=np.float64) / 9.0, mode="same")
-        stripe = ProfileStripeCandidate(
-            left_m=-0.5 * float(self.cfg.stripe_width_m),
-            right_m=0.5 * float(self.cfg.stripe_width_m),
-            center_m=0.0,
-            width_m=float(self.cfg.stripe_width_m),
-        )
+        stripe_pairs = self._extract_stripe_pairs_1d(smooth, hist > 0.0, centers, bin_size)
+        profile_stripes = [
+            ProfileStripeCandidate(
+                left_m=pair.left_m,
+                right_m=pair.right_m,
+                center_m=pair.center_m,
+                width_m=pair.width_m,
+            )
+            for pair in stripe_pairs
+        ]
+        if profile_stripes:
+            selected_idx = min(range(len(profile_stripes)), key=lambda idx: abs(profile_stripes[idx].center_m - stripe_center_m))
+        else:
+            profile_stripes = [
+                ProfileStripeCandidate(
+                    left_m=stripe_center_m - 0.5 * float(self.cfg.stripe_width_m),
+                    right_m=stripe_center_m + 0.5 * float(self.cfg.stripe_width_m),
+                    center_m=stripe_center_m,
+                    width_m=float(self.cfg.stripe_width_m),
+                )
+            ]
+            selected_idx = 0
         quality = float(np.clip(np.max(smooth) / max(np.sum(smooth), 1e-6) * len(smooth), 0.0, 1.0))
         return ProfileData(
             bins_center=centers,
             hist_combined=hist,
             smooth_hist=smooth,
-            stripe_candidates=[stripe],
-            selected_idx=0,
+            stripe_candidates=profile_stripes,
+            selected_idx=selected_idx,
             quality=quality,
         )
 
@@ -993,7 +1395,7 @@ class SimpleSplineTracker:
         self.state.lane_width_m = float(obs.width_m)
         self.state.left_edge_m = float(obs.left_edge_m)
         self.state.right_edge_m = float(obs.right_edge_m)
-        self.state.stripe_center_m = float(obs.stripe_center_m)
+        self.state.stripe_center_m = 0.0
         self.state.mode = TrackMode.SOLID_VISIBLE if obs.solid_score >= obs.dashed_score else TrackMode.DASH_VISIBLE
         self.state.profile_quality = float(obs.total_score)
         self.state.stripe_strength = float(obs.intensity_score)
@@ -1005,12 +1407,19 @@ class SimpleSplineTracker:
         self.state.gap_distance_m = 0.0
         self.state.curvature = _signed_angle(prev_heading, new_heading) / max(float(self.cfg.forward_distance_m), 1e-6)
         self._append_history(self.state.center_xyz, self.state.tangent_xy)
+        self._append_path(self.state.center_xyz, self.state.tangent_xy)
 
     def _append_history(self, center_xyz: np.ndarray, heading_xy: np.ndarray) -> None:
         if self.state is None:
             return
         self.state.history_centers.append(np.asarray(center_xyz, dtype=np.float64).copy())
         self.state.history_headings.append(_normalize(heading_xy))
+
+    def _append_path(self, center_xyz: np.ndarray, heading_xy: np.ndarray) -> None:
+        if self.state is None:
+            return
+        self.state.path_centers.append(np.asarray(center_xyz, dtype=np.float64).copy())
+        self.state.path_headings.append(_normalize(heading_xy))
 
     def _blend_heading(self, prev_heading: np.ndarray, candidate_heading: np.ndarray) -> np.ndarray:
         prev = _normalize(prev_heading)
@@ -1063,6 +1472,30 @@ class SimpleSplineTracker:
         )
         return np.column_stack([pts_xy, np.full(len(pts_xy), z_ref, dtype=np.float64)])
 
+    def _component_to_world_edge_polylines(
+        self,
+        state: TrackerState,
+        pred_heading: np.ndarray,
+        record: _ComponentCandidate | None,
+        z_ref: float,
+    ) -> list[np.ndarray] | None:
+        if record is None:
+            return None
+        tangent, normal = make_frame(pred_heading)
+        left_xy = (
+            state.center_xyz[:2][None, :]
+            + record.sample_along[:, None] * tangent[None, :]
+            + record.sample_left_edge[:, None] * normal[None, :]
+        )
+        right_xy = (
+            state.center_xyz[:2][None, :]
+            + record.sample_along[:, None] * tangent[None, :]
+            + record.sample_right_edge[:, None] * normal[None, :]
+        )
+        left_poly = np.column_stack([left_xy, np.full(len(left_xy), z_ref, dtype=np.float64)])
+        right_poly = np.column_stack([right_xy, np.full(len(right_xy), z_ref, dtype=np.float64)])
+        return [left_poly, right_poly]
+
     def _make_active_cell_boxes(
         self,
         state: TrackerState,
@@ -1075,7 +1508,11 @@ class SimpleSplineTracker:
         cell_size = float(cell_view["cell_size"][0])
         tangent, normal = make_frame(pred_heading)
         boxes: list[np.ndarray] = []
-        for a_idx, l_idx in np.argwhere(active_mask)[:200]:
+        active_indices = np.argwhere(active_mask)
+        display_limit = max(int(getattr(self.cfg, "active_box_display_limit", 200)), 0)
+        if display_limit > 0:
+            active_indices = active_indices[:display_limit]
+        for a_idx, l_idx in active_indices:
             along_val = float(along_centers[a_idx])
             lateral_val = float(lateral_centers[l_idx])
             center_xy = state.center_xyz[:2] + tangent * along_val + normal * lateral_val

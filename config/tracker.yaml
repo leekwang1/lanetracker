@@ -27,10 +27,12 @@ min_points_per_cell: 1
 component_min_cells: 4
 # 후보 ridge가 가져야 하는 최소 진행 길이
 component_min_span_m: 0.35
+# 활성 셀 박스를 최대 몇 개까지 표시할지 (0=무제한)
+active_box_display_limit: 500
 
 # [4. 후보]
 # 오버레이와 프로파일에 쓰는 차선 폭
-stripe_width_m: 0.14
+stripe_width_m: 0.15
 # 후보 점수의 횡방향 오차 스케일
 candidate_lateral_sigma_m: 0.08
 # 후보 점수의 방향 오차 스케일
@@ -49,3 +51,4 @@ max_heading_change_deg: 8.0
 use_z_clip: true
 # 로컬 Z 클립에 쓰는 높이 반범위
 z_clip_half_range_m: 0.3
+

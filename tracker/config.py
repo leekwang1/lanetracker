@@ -33,6 +33,7 @@ CONFIG_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
             ("min_points_per_cell", "셀 최소 포인트 수", "활성 셀로 인정할 최소 포인트 수"),
             ("component_min_cells", "최소 셀 수", "후보 ridge가 가져야 하는 최소 셀 수"),
             ("component_min_span_m", "최소 길이", "후보 ridge가 가져야 하는 최소 진행 길이"),
+            ("active_box_display_limit", "박스 표시 개수", "활성 셀 박스를 최대 몇 개까지 표시할지 (0=무제한)"),
         ],
     ),
     (
@@ -77,8 +78,9 @@ class TrackerConfig:
     min_points_per_cell: int = 1
     component_min_cells: int = 4
     component_min_span_m: float = 0.35
+    active_box_display_limit: int = 200
 
-    stripe_width_m: float = 0.14
+    stripe_width_m: float = 0.15
     candidate_lateral_sigma_m: float = 0.08
     candidate_heading_sigma_deg: float = 12.0
     candidate_min_score: float = 0.72
